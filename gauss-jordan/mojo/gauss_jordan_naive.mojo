@@ -105,9 +105,6 @@ fn gauss_jordan_naive[
                     matrix_modify[k, l] -= scale * matrix_modify[i, l]
                     inverse_matrix[k, l] -= scale * inverse_matrix[i, l]
 
-    # print(matrix_modify.__str__())
-    # print(inverse_matrix.__str__())
-
 
 fn to_numpy(matrix: Matrix) raises -> PythonObject:
     var np = Python.import_module("numpy")
@@ -137,9 +134,6 @@ fn main() raises:
     start = now()
     var inverse_pyarray: PythonObject = np.linalg.inv(pyarray)
     print("Time: ", now() - start)
-
-    # print(inverse_pyarray)
-    # print(inverse_matrix.__str__())
 
     for i in range(matrix.rows):
         for j in range(matrix.cols):
