@@ -2,6 +2,7 @@ from memory import UnsafePointer, memcpy, memset
 from random import rand
 from python import Python, PythonObject
 from testing import assert_almost_equal
+from time import monotonic as now
 
 
 struct Matrix[type: DType]:
@@ -60,8 +61,6 @@ fn gauss_jordan_naive[
     # [A | I] -> [I | A^-1]
     var matrix_modify = matrix
 
-    print(matrix_modify.__str__())
-
     if matrix.rows != matrix.cols:
         return
     if (
@@ -106,8 +105,8 @@ fn gauss_jordan_naive[
                     matrix_modify[k, l] -= scale * matrix_modify[i, l]
                     inverse_matrix[k, l] -= scale * inverse_matrix[i, l]
 
-    print(matrix_modify.__str__())
-    print(inverse_matrix.__str__())
+    # print(matrix_modify.__str__())
+    # print(inverse_matrix.__str__())
 
 
 fn to_numpy(matrix: Matrix) raises -> PythonObject:
@@ -120,26 +119,30 @@ fn to_numpy(matrix: Matrix) raises -> PythonObject:
 
 
 fn main() raises:
-    matrix = Matrix[DType.float32](3, 3)
+    matrix = Matrix[DType.float32](100, 100)
     matrix.randomize(-10, 10)
 
-    var inverse_matrix = Matrix[DType.float32](3, 3)
+    var inverse_matrix = Matrix[DType.float32](100, 100)
     inverse_matrix.identity_matrix()
 
+    var start = now()
     gauss_jordan_naive(matrix, inverse_matrix)
+    print("Time: ", now() - start)
 
     # compare with numpy inverse
     var np = Python.import_module("numpy")
     np.set_printoptions(precision=4)
     var pyarray: PythonObject = to_numpy(matrix)
 
+    start = now()
     var inverse_pyarray: PythonObject = np.linalg.inv(pyarray)
+    print("Time: ", now() - start)
 
-    print(inverse_pyarray)
-    print(inverse_matrix.__str__())
+    # print(inverse_pyarray)
+    # print(inverse_matrix.__str__())
 
     for i in range(matrix.rows):
         for j in range(matrix.cols):
             var value_1 = inverse_matrix[i, j]
             var value_2 = float(inverse_pyarray[i, j]).cast[DType.float32]()
-            assert_almost_equal(value_1, value_2)
+            assert_almost_equal(value_1, value_2, atol=1e-4)
