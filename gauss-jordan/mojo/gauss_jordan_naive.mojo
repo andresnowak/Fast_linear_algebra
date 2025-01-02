@@ -3,6 +3,8 @@ from random import rand
 from python import Python, PythonObject
 from testing import assert_almost_equal
 from time import monotonic as now
+from sys.info import simdwidthof
+from algorithm import vectorize
 
 
 struct Matrix[type: DType]:
@@ -21,11 +23,10 @@ struct Matrix[type: DType]:
 
     fn identity_matrix(mut self):
         if self.rows != self.cols:
+            print("Matrix must be square")
             return
         for i in range(self.rows):
-            for j in range(self.cols):
-                if i == j:
-                    self[i, j] = 1
+            self[i, i] = 1
 
     fn __copyinit__(mut self, matrix: Matrix[type]):
         self.rows = matrix.rows
@@ -52,6 +53,19 @@ struct Matrix[type: DType]:
 
     fn num_elements(self) -> Int:
         return self.rows * self.cols
+
+
+fn to_numpy(matrix: Matrix) raises -> PythonObject:
+    var np = Python.import_module("numpy")
+    var pyarray: PythonObject = np.empty(
+        (matrix.rows, matrix.cols), dtype=np.float32
+    )
+    var pointer_d = pyarray.__array_interface__["data"][
+        0
+    ].unsafe_get_as_pointer[DType.float32]()
+    var d: UnsafePointer[Float32] = matrix.data.bitcast[Float32]()
+    memcpy(pointer_d, d, matrix.num_elements())
+    return pyarray
 
 
 fn gauss_jordan_naive[
@@ -83,10 +97,9 @@ fn gauss_jordan_naive[
         for k in range(i + 1, rows):
             if matrix_modify[k, i] != 0:
                 var scale = matrix_modify[k, i] / matrix_modify[i, i]
-                scale = matrix_modify[k, i] / matrix_modify[i, i]
                 if matrix_modify[k, i] - scale * matrix_modify[i, i] != 0:
                     scale *= -1
-    
+
                 for l in range(cols):
                     matrix_modify[k, l] -= scale * matrix_modify[i, l]
                     inverse_matrix[k, l] -= scale * inverse_matrix[i, l]
@@ -100,26 +113,112 @@ fn gauss_jordan_naive[
                 var scale = matrix_modify[k, i] / matrix_modify[i, i]
                 if matrix_modify[k, i] - scale * matrix_modify[i, i] != 0:
                     scale *= -1
-    
+
                 for l in range(cols):
                     matrix_modify[k, l] -= scale * matrix_modify[i, l]
                     inverse_matrix[k, l] -= scale * inverse_matrix[i, l]
 
 
-fn to_numpy(matrix: Matrix) raises -> PythonObject:
-    var np = Python.import_module("numpy")
-    var pyarray: PythonObject = np.empty((matrix.rows, matrix.cols), dtype=np.float32)
-    var pointer_d = pyarray.__array_interface__["data"][0].unsafe_get_as_pointer[DType.float32]()
-    var d: UnsafePointer[Float32] = matrix.data.bitcast[Float32]()
-    memcpy(pointer_d, d, matrix.num_elements())
-    return pyarray
+fn gauss_jordan_simd[type: DType](matrix: Matrix[type]) raises -> Matrix[type]:
+    # We will use the two elementary row operations of scale and add scale of one row to another
+    # [A | I] -> [I | A^-1]
+    var matrix_modify = matrix
+    var inverse_matrix = Matrix[type](matrix.rows, matrix.cols)
+    inverse_matrix.identity_matrix()
+
+    alias nelts = simdwidthof[type]() * 2
+
+    if matrix.rows != matrix.cols:
+        raise "Matrix must be square"
+
+    var rows = matrix.rows
+    var cols = matrix.cols
+    # Gaussian Elimination
+    for i in range(rows):
+        # Normalize pivot to 1
+        var normalize_value = matrix_modify[i, i]
+
+        @parameter
+        fn v_normalize[_nelts: Int](j: Int):
+            # for j in range(cols):
+            matrix_modify.data.store(
+                i * cols + j,
+                matrix_modify.data.load[width=_nelts](i * cols + j)
+                / normalize_value,
+            )
+            inverse_matrix.data.store(
+                i * cols + j,
+                inverse_matrix.data.load[width=_nelts](i * cols + j)
+                / normalize_value,
+            )
+
+        vectorize[v_normalize, 1](cols)
+
+        # apply scale add by row i on the other rows k to make column j of row k equal to 0
+        for k in range(i + 1, rows):
+            if matrix_modify[k, i] != 0:
+                var scale = matrix_modify[k, i] / matrix_modify[i, i]
+                if matrix_modify[k, i] - scale * matrix_modify[i, i] != 0:
+                    scale *= -1
+
+                @parameter
+                fn v_scale_remove_to_zero[_nelts: Int](l: Int):
+                    # for l in range(cols):
+                    matrix_modify.data.store(
+                        k * cols + l,
+                        matrix_modify.data.load[width=_nelts](k * cols + l)
+                        - scale
+                        * matrix_modify.data.load[width=_nelts](i * cols + l),
+                    )
+
+                    inverse_matrix.data.store(
+                        k * cols + l,
+                        inverse_matrix.data.load[width=_nelts](k * cols + l)
+                        - scale
+                        * inverse_matrix.data.load[width=_nelts](i * cols + l),
+                    )
+                    # if i == l:
+                    #     matrix_modify[i, l] = abs(matrix_modify[i, l]) # why is mojo putting a value of -0.0 if I don't do this?
+
+                vectorize[v_scale_remove_to_zero, 1](cols)
+
+    # Jordan Elimination
+    for i in range(rows - 1, -1, -1):
+        for k in range(i - 1, -1, -1):
+            if matrix_modify[k, i] != 0:
+                var scale = matrix_modify[k, i] / matrix_modify[i, i]
+                if matrix_modify[k, i] - scale * matrix_modify[i, i] != 0:
+                    scale *= -1
+
+                @parameter
+                fn v_scale_remove_to_zero_2[_nelts: Int](l: Int):
+                    # for l in range(cols):
+                    matrix_modify.data.store(
+                        k * cols + l,
+                        matrix_modify.data.load[width=_nelts](k * cols + l)
+                        - scale
+                        * matrix_modify.data.load[width=_nelts](i * cols + l),
+                    )
+
+                    inverse_matrix.data.store(
+                        k * cols + l,
+                        inverse_matrix.data.load[width=_nelts](k * cols + l)
+                        - scale
+                        * inverse_matrix.data.load[width=_nelts](i * cols + l),
+                    )
+
+                vectorize[v_scale_remove_to_zero_2, 1](cols)
+
+    return inverse_matrix^
 
 
 fn main() raises:
-    matrix = Matrix[DType.float32](100, 100)
+    matrix = Matrix[DType.float32](
+        110, 110
+    )  # from 110 onward we get very different decimals, we get error on assert_almost_equal
     matrix.randomize(-10, 10)
 
-    var inverse_matrix = Matrix[DType.float32](100, 100)
+    var inverse_matrix = Matrix[DType.float32](matrix.rows, matrix.cols)
     inverse_matrix.identity_matrix()
 
     var start = now()
@@ -133,6 +232,25 @@ fn main() raises:
 
     start = now()
     var inverse_pyarray: PythonObject = np.linalg.inv(pyarray)
+    print("Time: ", now() - start)
+
+    for i in range(matrix.rows):
+        for j in range(matrix.cols):
+            var value_1 = inverse_matrix[i, j]
+            var value_2 = float(inverse_pyarray[i, j]).cast[DType.float32]()
+            assert_almost_equal(value_1, value_2, atol=1e-4)
+
+    # Test SIMD version
+    print("SIMD version")
+
+    start = now()
+    inverse_matrix = gauss_jordan_simd(matrix)
+    print("Time: ", now() - start)
+
+    pyarray = to_numpy(matrix)
+
+    start = now()
+    inverse_pyarray = np.linalg.inv(pyarray)
     print("Time: ", now() - start)
 
     for i in range(matrix.rows):
