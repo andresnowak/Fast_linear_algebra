@@ -1,5 +1,5 @@
 from memory import UnsafePointer, memcpy, memset
-from random import rand
+from random import rand, randint
 from python import Python, PythonObject
 from testing import assert_almost_equal
 from time import monotonic as now
@@ -70,18 +70,15 @@ fn to_numpy(matrix: Matrix) raises -> PythonObject:
 
 fn gauss_jordan_naive[
     type: DType
-](matrix: Matrix[type], mut inverse_matrix: Matrix[type]):
+](matrix: Matrix[type]) raises -> Matrix[type]:
     # We will use the two elementary row operations of scale and add scale of one row to another
     # [A | I] -> [I | A^-1]
     var matrix_modify = matrix
+    var inverse_matrix = Matrix[type](matrix.rows, matrix.cols)
+    inverse_matrix.identity_matrix()
 
     if matrix.rows != matrix.cols:
-        return
-    if (
-        inverse_matrix.rows != inverse_matrix.cols
-        and inverse_matrix.rows != matrix.rows
-    ):
-        return
+        raise "Matrix must be square"
 
     var rows = matrix.rows
     var cols = matrix.cols
@@ -117,6 +114,8 @@ fn gauss_jordan_naive[
                 for l in range(cols):
                     matrix_modify[k, l] -= scale * matrix_modify[i, l]
                     inverse_matrix[k, l] -= scale * inverse_matrix[i, l]
+    
+    return inverse_matrix ^
 
 
 fn gauss_jordan_simd[type: DType](matrix: Matrix[type]) raises -> Matrix[type]:
@@ -215,14 +214,11 @@ fn gauss_jordan_simd[type: DType](matrix: Matrix[type]) raises -> Matrix[type]:
 fn main() raises:
     matrix = Matrix[DType.float32](
         110, 110
-    )  # from 110 onward we get very different decimals, we get error on assert_almost_equal
+    )  # TODO: from 110 onward we get very different decimals, we get error on assert_almost_equal
     matrix.randomize(-10, 10)
 
-    var inverse_matrix = Matrix[DType.float32](matrix.rows, matrix.cols)
-    inverse_matrix.identity_matrix()
-
     var start = now()
-    gauss_jordan_naive(matrix, inverse_matrix)
+    var inverse_matrix = gauss_jordan_naive(matrix)
     print("Time: ", now() - start)
 
     # compare with numpy inverse
