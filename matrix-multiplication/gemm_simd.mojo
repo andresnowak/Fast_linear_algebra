@@ -1,9 +1,21 @@
+from sys import info
+from algorithm.functional import vectorize
+
 from src.matrix import Matrix
+
+fn get_nelts[Type: DType]() -> Int:
+    # simdwidthof(T) = #lanes per vector * #vector‐ops you can issue per cycle
+    if info.is_apple_silicon():
+        return 4 * info.simdwidthof[Type]()
+    else:
+        return 2 * info.simdwidthof[Type]()
 
 fn matmul[Type: DType](a: Matrix[Type], b: Matrix[Type]) -> Matrix[Type]:
     if a.cols != b.rows:
         print("A cols and B rows have to be equal")
         return Matrix[Type](0, 0)
+
+    alias NELTS = get_nelts[Type]()
 
     n = a.rows
     m = b.cols
@@ -13,8 +25,11 @@ fn matmul[Type: DType](a: Matrix[Type], b: Matrix[Type]) -> Matrix[Type]:
 
     for i in range(n):
         for k in range(h):
-            for j in range(m):
-                    res[i, j] += a[i, k] * b[k, j]
+            @parameter
+            fn vectorize_j[width: Int](j: Int):
+                res.store[width](i, j, res.load[width](i, j) + a[i, k] * b.load[width](k, j))
+            
+            vectorize[vectorize_j, NELTS](m)
 
     return res^
 
