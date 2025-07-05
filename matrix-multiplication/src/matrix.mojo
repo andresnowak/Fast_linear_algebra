@@ -66,16 +66,6 @@ struct Matrix[Type: DType](Copyable, Movable, Writable):
 
     @no_inline
     fn write_to[W: Writer](self, mut writer: W):
-        """Write `my_list.__str__()` to a `Writer`.
-
-        Parameters:
-            W: A type conforming to the Writable trait.
-            U: The type of the List elements. Must have the trait
-                `Representable`.
-
-        Args:
-            writer: The object to write to.
-        """
         writer.write("[")
         for i in range(self.rows):
             writer.write("[")
