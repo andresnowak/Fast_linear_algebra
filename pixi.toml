@@ -1,0 +1,11 @@
+[workspace]
+authors = ["andres"]
+channels = ["https://conda.modular.com/max-nightly", "conda-forge"]
+name = "Fast_linear_algebra"
+platforms = ["osx-arm64"]
+version = "0.1.0"
+
+[tasks]
+
+[dependencies]
+modular = ">=25.5.0.dev2025061405,<26"
