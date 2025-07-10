@@ -1,8 +1,9 @@
 from sys import info
 from algorithm.functional import vectorize
-from memory import stack_allocation, memset_zero, memset
+from memory import stack_allocation, memset_zero, memset, UnsafePointer
 from math import fma
 from testing import assert_almost_equal
+from sys.intrinsics import masked_store
 
 from src.matrix import Matrix
 from src.test import basic_matmul
@@ -31,8 +32,29 @@ fn get_nr_mr[Type: DType]() -> Tuple[Int, Int]:
     return (0, 0)
 
 
-fn copy_pad_blockA[Type: DType](a: Matrix[Type]):
-    pass
+fn copy_pad_blockA[Type: DType, //, nR: Int](mut blockA_buffer: Matrix[Type], a: Matrix[Type], nr: Int, n: Int, K: Int):
+    alias NELTS = info.simdwidthof[Type]()
+
+    for i in range(n):
+        @parameter
+        fn vectorize_k[nelts: Int](p: Int):
+            blockA_buffer.store[nelts](i, p, a.load[nelts](nr + i, p))
+        vectorize[vectorize_k, NELTS](K)
+    for i in range(n, nR):
+        @parameter
+        fn vectorize_k_2[nelts: Int](p: Int):
+            blockA_buffer.store[nelts](i, p, 0)
+        vectorize[vectorize_k_2, NELTS](K)
+
+
+fn copy_pad_blockB[Type: DType, //, mR: Int](mut blockB_buffer: Matrix[Type], b: Matrix[Type], mr: Int, m: Int, K: Int):
+    alias NELTS = info.simdwidthof[Type]()
+
+    for p in range(K):
+        for j in range(m):
+            blockB_buffer[p, j] = b[p, mr + j]
+        for j in range(m, mR):
+            blockB_buffer[p, j] = 0
 
 
 @always_inline
@@ -44,7 +66,11 @@ fn micro_kernel[
     b: Matrix[Type],
     nr: Int,
     mr: Int,
-    k: Int,
+    nr_a: Int,
+    mr_b: Int,
+    K: Int,
+    n: Int,
+    m: Int,
 ):
     # For us we say nR is from matrix a and mR is from matrix b
 
@@ -55,40 +81,47 @@ fn micro_kernel[
 
     var a_broadcasted_register = SIMD[Type, NELTS]()
 
-    for p in range(k):
+    for p in range(K):
+        @parameter
         for i in range(nR):
 
             @parameter
             fn vectorize_j[nelts: Int](j: Int):
                 if nelts == NELTS:
-                    a_broadcasted_register = a[nr + i, p]
+                    a_broadcasted_register = a[nr_a + i, p]
 
                     c_accumulator.store[width=NELTS](
                         i * mR + j,
                         c_accumulator.load[width=NELTS](i * mR + j)
-                        + b.load[NELTS](p, mr + j) * a_broadcasted_register,
+                        + b.load[NELTS](p, mr_b + j) * a_broadcasted_register,
                     )
                 else:
-                    var a_broadcasted_register = SIMD[Type, nelts](a[nr + i, p])
+                    var a_broadcasted_register = SIMD[Type, nelts](a[nr_a + i, p])
 
                     c_accumulator.store[width=nelts](
                         i * mR + j,
                         c_accumulator.load[width=nelts](i * mR + j)
-                        + b.load[nelts](p, mr + j) * a_broadcasted_register,
+                        + b.load[nelts](p, mr_b + j) * a_broadcasted_register,
                     )
 
             vectorize[vectorize_j, NELTS, unroll_factor=mR](mR)
 
-    @parameter
-    for i in range(nR):
-        @parameter
-        fn vectorize_j_store[nelts: Int](j: Int):
-        # for j in range(mR):
-            var res_pos = (nr + i) * res.cols + mr + j
-            res.store[width=nelts](nr + i, mr + j, c_accumulator.load[width=nelts](i * mR + j))
-            # res[nr + i, mr + j] = c_accumulator[i * mR + j]
-        
-        vectorize[vectorize_j_store, NELTS, unroll_factor=mR](mR)
+    if m != mR:
+        for i in range(n):
+            @parameter
+            fn vectorize_j_store[nelts: Int](j: Int):
+                var res_pos = (nr + i) * res.cols + mr + j
+                res.store[width=nelts](nr + i, mr + j, c_accumulator.load[width=nelts](i * mR + j))
+            
+            vectorize[vectorize_j_store, NELTS](m)
+    else:
+        for i in range(n):
+            @parameter
+            fn vectorize_j_store_2[nelts: Int](j: Int):
+                var res_pos = (nr + i) * res.cols + mr + j
+                res.store[width=nelts](nr + i, mr + j, c_accumulator.load[width=nelts](i * mR + j))
+            
+            vectorize[vectorize_j_store_2, NELTS, unroll_factor=mR](mR)
 
 
 fn matmul[Type: DType](a: Matrix[Type], b: Matrix[Type]) -> Matrix[Type]:
@@ -96,20 +129,41 @@ fn matmul[Type: DType](a: Matrix[Type], b: Matrix[Type]) -> Matrix[Type]:
         print("A cols and B rows have to be equal")
         return Matrix[Type](0, 0)
 
-    n = a.rows
-    m = b.cols
-    k = a.cols
+    var N = a.rows
+    var M = b.cols
+    var K = a.cols
 
-    var res = Matrix[Type](n, m)
+    var res = Matrix[Type](N, M)
 
     alias mR_nR = get_nr_mr[Type]()
     # here we say a is size (n, k) and b is size (k, m), so mR belongs to b
     alias mR = mR_nR[0]
     alias nR = mR_nR[1]
 
-    for mr in range(0, m, mR):
-        for nr in range(0, n, nR):
-            micro_kernel[mR, nR](res, a, b, nr, mr, k)
+    var blockA_buffer = Matrix[Type](nR, K)
+    var blockB_buffer = Matrix[Type](K, mR)
+
+    for mr in range(0, M, mR):
+        var m = min(mR, M - mr)
+        var blockB = UnsafePointer(to=b)
+        
+        var mr_blockB = mr
+        if m != mR:
+            copy_pad_blockB[nR](blockB_buffer, b, mr, m, K)
+            blockB = UnsafePointer(to=blockB_buffer)
+            mr_blockB = 0
+        for nr in range(0, N, nR):
+            var n = min(nR, N - nr)
+            var blockA = UnsafePointer(to=a)
+
+            var nr_blockA = nr
+            if n != nR:
+                copy_pad_blockA[nR](blockA_buffer, a, nr, n, K)
+                blockA = UnsafePointer(to=blockA_buffer)
+                nr_blockA = 0
+
+            micro_kernel[mR, nR](res, blockA[], blockB[], nr, mr, nr_blockA, mr_blockB, K, n, m)
+
     return res^
 
 
@@ -119,14 +173,18 @@ alias MatmulSignature = fn[Type: DType] (Matrix[Type], Matrix[Type]) -> Matrix[
 
 
 fn test_matmul[matmul: MatmulSignature]() raises:
-    var a = Matrix[DType.float32].rand(6 * 4, 24)
-    var b = Matrix[DType.float32].rand(24, 16 * 4)
+    var N = 51
+    var M = 16 * 4 + 5
+    var K = 24
+
+    var a = Matrix[DType.float32].rand(N, K)
+    var b = Matrix[DType.float32].rand(K, M)
     var res = matmul(a, b)
     var correct = basic_matmul(a, b)
 
-    for i in range(6 * 4 * 16 * 4):
+    for i in range(N * M):
         assert_almost_equal(res.data[i], correct.data[i], atol=1e-5)
-    print("✅ Passed test with M =", 6 * 4, ", N =", 16 * 4, ", K =", 24)
+    print("✅ Passed test with M =", M, ", N =", N, ", K =", K)
 
 
 fn main() raises:

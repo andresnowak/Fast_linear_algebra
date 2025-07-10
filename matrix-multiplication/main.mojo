@@ -5,5 +5,5 @@ from gemm_simd import matmul as matmul_simd
 from gemm_micro_kernel import matmul as matmul_micro_kernel
 
 fn main() raises:
-    test_matmul[matmul_simd]()
-    bench_matmul[matmul_simd]()
+    test_matmul[matmul_micro_kernel]()
+    bench_matmul[matmul_micro_kernel]()
