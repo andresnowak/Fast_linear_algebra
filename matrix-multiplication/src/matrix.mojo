@@ -10,7 +10,7 @@ struct Matrix[Type: DType](Copyable, Movable, Writable):
     @staticmethod
     fn rand(rows: Int, cols: Int) -> Self:
         var data = UnsafePointer[SIMD[Type, 1]].alloc(rows * cols)
-        rand(data, rows * cols, min=0, max=10)
+        rand(data, rows * cols, min=1, max=10)
         return Self(data, rows, cols)
 
     @staticmethod
@@ -21,7 +21,7 @@ struct Matrix[Type: DType](Copyable, Movable, Writable):
 
         for i in range(rows):
             for j in range(cols):
-                data[i + j * cols] = SIMD[Type, 1]((temp[i + j * cols]))
+                data[i * cols + j] = SIMD[Type, 1]((temp[i * cols + j]))
 
         return Self(data, rows, cols)
 

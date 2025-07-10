@@ -1,6 +1,15 @@
+*
+# But don't ignore folders (needed to recurse)
+!*/
+# Don't ignore files with extensions (contain at least one dot)
+!*.*
 
 # pixi environments
 .pixi
 *.egg-info
+
 .DS_Store
 .vscode
+
+*.metallib
+*.air
