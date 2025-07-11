@@ -1,4 +1,4 @@
-from sys import info
+from sys import info, alignof, prefetch
 from algorithm.functional import vectorize
 from memory import stack_allocation, memset_zero, memset, UnsafePointer
 from math import fma
@@ -45,13 +45,12 @@ fn copy_pad_blockA[
             blockA_buffer.store[nelts](i, p, a.load[nelts](nr + i, p))
 
         vectorize[vectorize_k, NELTS](K)
-    for i in range(n, nR):
 
-        @parameter
-        fn vectorize_k_2[nelts: Int](p: Int):
-            blockA_buffer.store[nelts](i, p, 0)
+    @parameter
+    fn vectorize_pad[nelts: Int](i: Int):
+        blockA_buffer.data.store[width=nelts](n * K + i, 0)
 
-        vectorize[vectorize_k_2, NELTS](K)
+    vectorize[vectorize_pad, NELTS]((nR - n) * K)
 
 
 fn copy_pad_blockB[
@@ -60,10 +59,18 @@ fn copy_pad_blockB[
     alias NELTS = info.simdwidthof[Type]()
 
     for p in range(K):
-        for j in range(m):
-            blockB_buffer[p, j] = b[p, mr + j]
-        for j in range(m, mR):
-            blockB_buffer[p, j] = 0
+        @parameter
+        fn vectorize_copy[nelts: Int](j: Int):
+            blockB_buffer.store[nelts](
+                p, j,
+                b.load[nelts](p, mr + j)
+            )
+        vectorize[vectorize_copy, NELTS](m)
+
+        @parameter
+        fn vectorize_pad[nelts: Int](j: Int):
+            blockB_buffer.store[nelts](p, m + j, 0)
+        vectorize[vectorize_pad, NELTS](mR - m)
 
 
 @always_inline
@@ -85,8 +92,9 @@ fn micro_kernel[
 
     alias NELTS = info.simdwidthof[Type]()
 
-    var c_accumulator = stack_allocation[nR * mR * NELTS, Type]()
-    memset_zero[count = nR * mR * NELTS](c_accumulator)
+    alias alignment = alignof[SIMD[Type, NELTS]]()
+    var c_accumulator = stack_allocation[nR * mR, Type, alignment=alignment]()
+    memset_zero[count = nR * mR](c_accumulator)
 
     for p in range(K):
 
@@ -98,8 +106,7 @@ fn micro_kernel[
             for j in range(0, mR, NELTS):
                 c_accumulator.store[width=NELTS](
                     i * mR + j,
-                    c_accumulator.load[width=NELTS](i * mR + j)
-                    + b.load[NELTS](p, mr_b + j) * a_broadcasted_register,
+                    fma(a_broadcasted_register, b.load[NELTS](p, mr_b + j), c_accumulator.load[width=NELTS](i * mR + j))
                 )
 
     if m != mR:
@@ -149,9 +156,10 @@ fn matmul[Type: DType](a: Matrix[Type], b: Matrix[Type]) -> Matrix[Type]:
 
         var mr_blockB = mr
         if m != mR:
-            copy_pad_blockB[nR](blockB_buffer, b, mr, m, K)
+            copy_pad_blockB[mR](blockB_buffer, b, mr, m, K)
             blockB = UnsafePointer(to=blockB_buffer)
             mr_blockB = 0
+
         for nr in range(0, N, nR):
             var n = min(nR, N - nr)
             var blockA = UnsafePointer(to=a)

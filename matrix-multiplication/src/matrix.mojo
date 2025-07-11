@@ -49,15 +49,19 @@ struct Matrix[Type: DType](Copyable, Movable, Writable):
         self.rows = existing.rows
         self.cols = existing.cols
 
+    @always_inline
     fn __getitem__(self, y: Int, x: Int) -> Scalar[Type]:
         return self.data.load[width=1](y * self.cols + x)
-
+        
+    @always_inline
     fn __setitem__(self, y: Int, x: Int, value: Scalar[Type]):
         self.data.store[width=1](y * self.cols + x, value)
 
+    @always_inline
     fn load[width: Int](self, y: Int, x: Int) -> SIMD[Type, width]:
         return self.data.load[width=width](y * self.cols + x)
 
+    @always_inline
     fn store[width: Int](self, y: Int, x: Int, value: SIMD[Type, width]):
         self.data.store[width=width](y * self.cols + x, value)
 
