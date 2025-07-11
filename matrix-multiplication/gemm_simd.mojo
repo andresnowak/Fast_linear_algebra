@@ -1,5 +1,6 @@
 from sys import info
 from algorithm.functional import vectorize
+from math import fma
 
 from src.matrix import Matrix
 
@@ -27,7 +28,7 @@ fn matmul[Type: DType](a: Matrix[Type], b: Matrix[Type]) -> Matrix[Type]:
         for k in range(h):
             @parameter
             fn vectorize_j[width: Int](j: Int):
-                res.store[width](i, j, res.load[width](i, j) + a[i, k] * b.load[width](k, j))
+                res.store[width](i, j, fma(SIMD[Type, width](a[i, k]), b.load[width](k, j), res.load[width](i, j)))
             
             vectorize[vectorize_j, NELTS](m)
 
