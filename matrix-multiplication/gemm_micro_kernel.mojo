@@ -20,6 +20,7 @@ fn get_nelts[Type: DType]() -> Int:
 
 
 fn get_nr_mr[Type: DType]() -> Tuple[Int, Int]:
+    # mr is always a multiple of simdwidth
     if Type == DType.float64 or Type == DType.int64:
         return (10, 4)
     if Type == DType.float32 or Type == DType.int32:
@@ -32,22 +33,30 @@ fn get_nr_mr[Type: DType]() -> Tuple[Int, Int]:
     return (0, 0)
 
 
-fn copy_pad_blockA[Type: DType, //, nR: Int](mut blockA_buffer: Matrix[Type], a: Matrix[Type], nr: Int, n: Int, K: Int):
+fn copy_pad_blockA[
+    Type: DType, //, nR: Int
+](mut blockA_buffer: Matrix[Type], a: Matrix[Type], nr: Int, n: Int, K: Int):
     alias NELTS = info.simdwidthof[Type]()
 
     for i in range(n):
+
         @parameter
         fn vectorize_k[nelts: Int](p: Int):
             blockA_buffer.store[nelts](i, p, a.load[nelts](nr + i, p))
+
         vectorize[vectorize_k, NELTS](K)
     for i in range(n, nR):
+
         @parameter
         fn vectorize_k_2[nelts: Int](p: Int):
             blockA_buffer.store[nelts](i, p, 0)
+
         vectorize[vectorize_k_2, NELTS](K)
 
 
-fn copy_pad_blockB[Type: DType, //, mR: Int](mut blockB_buffer: Matrix[Type], b: Matrix[Type], mr: Int, m: Int, K: Int):
+fn copy_pad_blockB[
+    Type: DType, //, mR: Int
+](mut blockB_buffer: Matrix[Type], b: Matrix[Type], mr: Int, m: Int, K: Int):
     alias NELTS = info.simdwidthof[Type]()
 
     for p in range(K):
@@ -79,49 +88,40 @@ fn micro_kernel[
     var c_accumulator = stack_allocation[nR * mR * NELTS, Type]()
     memset_zero[count = nR * mR * NELTS](c_accumulator)
 
-    var a_broadcasted_register = SIMD[Type, NELTS]()
-
     for p in range(K):
+
         @parameter
         for i in range(nR):
+            var a_broadcasted_register = SIMD[Type, NELTS](a[nr_a + i, p])
 
             @parameter
-            fn vectorize_j[nelts: Int](j: Int):
-                if nelts == NELTS:
-                    a_broadcasted_register = a[nr_a + i, p]
-
-                    c_accumulator.store[width=NELTS](
-                        i * mR + j,
-                        c_accumulator.load[width=NELTS](i * mR + j)
-                        + b.load[NELTS](p, mr_b + j) * a_broadcasted_register,
-                    )
-                else:
-                    var a_broadcasted_register = SIMD[Type, nelts](a[nr_a + i, p])
-
-                    c_accumulator.store[width=nelts](
-                        i * mR + j,
-                        c_accumulator.load[width=nelts](i * mR + j)
-                        + b.load[nelts](p, mr_b + j) * a_broadcasted_register,
-                    )
-
-            vectorize[vectorize_j, NELTS, unroll_factor=mR](mR)
+            for j in range(0, mR, NELTS):
+                c_accumulator.store[width=NELTS](
+                    i * mR + j,
+                    c_accumulator.load[width=NELTS](i * mR + j)
+                    + b.load[NELTS](p, mr_b + j) * a_broadcasted_register,
+                )
 
     if m != mR:
         for i in range(n):
+
             @parameter
             fn vectorize_j_store[nelts: Int](j: Int):
                 var res_pos = (nr + i) * res.cols + mr + j
-                res.store[width=nelts](nr + i, mr + j, c_accumulator.load[width=nelts](i * mR + j))
-            
+                res.store[width=nelts](
+                    nr + i, mr + j, c_accumulator.load[width=nelts](i * mR + j)
+                )
+
             vectorize[vectorize_j_store, NELTS](m)
     else:
         for i in range(n):
+
             @parameter
-            fn vectorize_j_store_2[nelts: Int](j: Int):
+            for j in range(0, mR, NELTS):
                 var res_pos = (nr + i) * res.cols + mr + j
-                res.store[width=nelts](nr + i, mr + j, c_accumulator.load[width=nelts](i * mR + j))
-            
-            vectorize[vectorize_j_store_2, NELTS, unroll_factor=mR](mR)
+                res.store[width=NELTS](
+                    nr + i, mr + j, c_accumulator.load[width=NELTS](i * mR + j)
+                )
 
 
 fn matmul[Type: DType](a: Matrix[Type], b: Matrix[Type]) -> Matrix[Type]:
@@ -146,7 +146,7 @@ fn matmul[Type: DType](a: Matrix[Type], b: Matrix[Type]) -> Matrix[Type]:
     for mr in range(0, M, mR):
         var m = min(mR, M - mr)
         var blockB = UnsafePointer(to=b)
-        
+
         var mr_blockB = mr
         if m != mR:
             copy_pad_blockB[nR](blockB_buffer, b, mr, m, K)
@@ -162,7 +162,9 @@ fn matmul[Type: DType](a: Matrix[Type], b: Matrix[Type]) -> Matrix[Type]:
                 blockA = UnsafePointer(to=blockA_buffer)
                 nr_blockA = 0
 
-            micro_kernel[mR, nR](res, blockA[], blockB[], nr, mr, nr_blockA, mr_blockB, K, n, m)
+            micro_kernel[mR, nR](
+                res, blockA[], blockB[], nr, mr, nr_blockA, mr_blockB, K, n, m
+            )
 
     return res^
 
