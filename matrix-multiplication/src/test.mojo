@@ -22,7 +22,7 @@ fn basic_matmul[Type: DType](a: Matrix[Type], b: Matrix[Type]) -> Matrix[Type]:
     return res^
 
 
-alias SCENARIOS = InlineArray[size=10](
+alias SCENARIOS = InlineArray[size=11](
     InlineArray[size=3](1, 1, 1), 
     InlineArray[size=3](1, 47, 97), 
     InlineArray[size=3](53, 1, 101), 
@@ -31,7 +31,8 @@ alias SCENARIOS = InlineArray[size=10](
     InlineArray[size=3](128, 3072, 768), 
     InlineArray[size=3](512, 512, 512), 
     InlineArray[size=3](256, 1024, 4096), 
-    InlineArray[size=3](1024, 1024, 1024), 
+    InlineArray[size=3](1024, 1024, 1024),
+    InlineArray[size=3](1300, 1024, 1024),  
     InlineArray[size=3](4096, 4096, 8192)
 )
 alias TYPES = InlineArray[size=7](DType.int8, DType.int16, DType.int32, DType.int64, DType.float16, DType.float32, DType.float64)

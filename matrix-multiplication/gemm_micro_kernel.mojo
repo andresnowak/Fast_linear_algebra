@@ -28,7 +28,7 @@ fn get_nr_mr[Type: DType]() -> Tuple[Int, Int]:
     if Type == DType.float16 or Type == DType.int16 or Type == DType.bfloat16:
         return (16, 12)
     if Type == DType.int8:
-        return (16, 28)
+        return (16, 26) # return (16, 28)
 
     return (0, 0)
 
@@ -88,7 +88,8 @@ fn micro_kernel[
     n: Int,
     m: Int,
 ):
-    # For us we say nR is from matrix a and mR is from matrix b
+    # For us we say nR is from matrix A and mR is from matrix B
+    # 1 register for broadcasted value of A, mR/NELTS registers for B and mR/NELTS * nR registers for C_accumulator
 
     alias NELTS = info.simdwidthof[Type]()
 
@@ -96,17 +97,22 @@ fn micro_kernel[
     var c_accumulator = stack_allocation[nR * mR, Type, alignment=alignment]()
     memset_zero[count = nR * mR](c_accumulator)
 
-    for p in range(K):
+    var a_vecs = InlineArray[SIMD[Type, NELTS], nR](uninitialized=True)
 
+    for p in range(K):
+        
         @parameter
         for i in range(nR):
-            var a_broadcasted_register = SIMD[Type, NELTS](a[nr_a + i, p])
-
+            a_vecs[i] = a[nr_a + i, p]
+            # a_broadcasted_register = a[nr_a + i, p]
+        
+        @parameter
+        for i in range(nR):
             @parameter
             for j in range(0, mR, NELTS):
                 c_accumulator.store[width=NELTS](
                     i * mR + j,
-                    fma(a_broadcasted_register, b.load[NELTS](p, mr_b + j), c_accumulator.load[width=NELTS](i * mR + j))
+                    fma(a_vecs[i], b.load[NELTS](p, mr_b + j), c_accumulator.load[width=NELTS](i * mR + j))
                 )
 
     if m != mR:
@@ -152,22 +158,22 @@ fn matmul[Type: DType](a: Matrix[Type], b: Matrix[Type]) -> Matrix[Type]:
 
     for mr in range(0, M, mR):
         var m = min(mR, M - mr)
-        var blockB = UnsafePointer(to=b)
+        var blockB = Pointer[origin=ImmutableAnyOrigin](to=b)
 
         var mr_blockB = mr
         if m != mR:
             copy_pad_blockB[mR](blockB_buffer, b, mr, m, K)
-            blockB = UnsafePointer(to=blockB_buffer)
+            blockB = Pointer[origin=ImmutableAnyOrigin](to=blockB_buffer)
             mr_blockB = 0
 
         for nr in range(0, N, nR):
             var n = min(nR, N - nr)
-            var blockA = UnsafePointer(to=a)
+            var blockA = Pointer[origin=ImmutableAnyOrigin](to=a)
 
             var nr_blockA = nr
             if n != nR:
                 copy_pad_blockA[nR](blockA_buffer, a, nr, n, K)
-                blockA = UnsafePointer(to=blockA_buffer)
+                blockA = Pointer[origin=ImmutableAnyOrigin](to=blockA_buffer)
                 nr_blockA = 0
 
             micro_kernel[mR, nR](
@@ -198,13 +204,15 @@ fn test_matmul[matmul: MatmulSignature]() raises:
 
 
 fn main() raises:
-    a = Matrix[DType.float32].randint(6 * 4, 24)
-    b = Matrix[DType.float32].randint(24, 16 * 4)
+    a = Matrix[DType.int8].randint(1300, 1024)
+    b = Matrix[DType.int8].randint(1024, 1024)
 
-    print(a)
-    print()
-    print(b)
-    print("\n\n")
-    print(matmul(a, b))
+    # print(a)
+    # print()
+    # print(b)
+    # print("\n\n")
+    # print(matmul(a, b))
 
-    test_matmul[matmul]()
+    # test_matmul[matmul]()
+
+    matmul(a, b)

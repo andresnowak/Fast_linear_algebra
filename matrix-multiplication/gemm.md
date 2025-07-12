@@ -129,132 +129,6 @@ fn matmul[Type: DType](a: Matrix[Type], b: Matrix[Type]) -> Matrix[Type]:
     return res^
 ```
 
-## GEMM Micro Kernel
-
-Now we have learned about loop reordering and SIMD operations, so now lets talk about basically the most important thing in matmul the micro-kernel (or accumulator), the idea is that we will have a block of size ($mR \times nR$) called $\bar{C}$ and instead of having A and B matrix we will work on $\bar{A}$ ($nR \times K$) and $\bar{B}$ ($mR \times K$).
-
-The idea of working with this micro-kernel is one to reduce the number of memory access and two to be able to work the most on the registers (so having the fastest data access). 
-
-Letss see our original normal operation multiplying a rows of $\bar{A}$ and columns of $\bar{B}$ in the end we will have $2K \times mR \times nR$ memory accesses, why $2K$ because we access $K$ times both the rows of $\bar{A}$ and the columns of $\bar{B}$.
-
-But lets now see if we work with the idea of doing outer products. What do we mean by that the idea is that we will now instead access columns of $\bar{A}$ and rows of $\bar{B}$ and for each one value of the column of $\bar{A}$ we will broadcast it and do a outer product with the row of $\bar{B}$ this gives us the first values for the first row of $\bar{C}$ then we go to next value of $\bar{A}$ and do the same and we get the first values of the next row of $\bar{C}$ and after we do this and then $K$ times for all teh rows and columns we instead only have ($(mR + nR) \times K$) memory accesses. And this difference is more noticeable when we have bigger ($mR + nR$) values.
-
-Now to know the sizes of mR, nR we need to think about how many ymm registers (simd registers) we have, and for M1 we have 32 ymm registers. And based on what we said before we would first need $mR \times nR$ registers for $\bar{C}$ then $mR$ registers for rows of $\bar{B}$ and one register for $\bar{A}$ (one register becasue we can reuse it for the broadcast of each of the values of the columns of $\bar{A}$)
-
-so in the end we are constrained by $(\frac{mR}{\text{simd\_width}} * nR + \frac{mR}{\text{simd\_width}} + 1) \leq 32$
-
-and to have the smallest amount of accesses mR and nR would be the same values (because if we have that $mR \times nR = P$ they equal a constant value, then the sum $mR + nR = S$ would be smallest when we have the smae because we have that first $nR = \frac{P}{mR}$ then we have that $mR + \frac{P}{mR} = S$ and smallest values would be when derivative is zero so we would have that $1 - \frac{P}{mR^2} = 0, \quad mR = \sqrt{P}$ and $nR = \frac{P}{\sqrt{P}} = \sqrt{P}$). But even though different values of mR and nR can get better results the only thing is that we are constrained by our formula and that mR has to be divisble by the simd_width
-
-```python
-@always_inline
-fn micro_kernel[
-    Type: DType, //, mR: Int, nR: Int
-](
-    mut res: Matrix[Type],
-    a: Matrix[Type],
-    b: Matrix[Type],
-    nr: Int,
-    mr: Int,
-    nr_a: Int,
-    mr_b: Int,
-    K: Int,
-    n: Int,
-    m: Int,
-):
-    # For us we say nR is from matrix a and mR is from matrix b
-
-    alias NELTS = info.simdwidthof[Type]()
-
-    alias alignment = alignof[SIMD[Type, NELTS]]()
-    var c_accumulator = stack_allocation[nR * mR, Type, alignment=alignment]()
-    memset_zero[count = nR * mR](c_accumulator)
-
-    for p in range(K):
-
-        @parameter
-        for i in range(nR):
-            var a_broadcasted_register = SIMD[Type, NELTS](a[nr_a + i, p])
-
-            @parameter
-            for j in range(0, mR, NELTS):
-                c_accumulator.store[width=NELTS](
-                    i * mR + j,
-                    fma(a_broadcasted_register, b.load[NELTS](p, mr_b + j), c_accumulator.load[width=NELTS](i * mR + j))
-                )
-
-    if m != mR:
-        for i in range(n):
-
-            @parameter
-            fn vectorize_j_store[nelts: Int](j: Int):
-                var res_pos = (nr + i) * res.cols + mr + j
-                res.store[width=nelts](
-                    nr + i, mr + j, c_accumulator.load[width=nelts](i * mR + j)
-                )
-
-            vectorize[vectorize_j_store, NELTS](m)
-    else:
-        for i in range(n):
-
-            @parameter
-            for j in range(0, mR, NELTS):
-                var res_pos = (nr + i) * res.cols + mr + j
-                res.store[width=NELTS](
-                    nr + i, mr + j, c_accumulator.load[width=NELTS](i * mR + j)
-                )
-```
-
-The only other thing is that we have to consider that M and N sometimes will not be divisble by mR and nR, so when we are at teh extremes of the matrices our $mR \times nR$ would be outside the bounds so here instead we can pad our $\bar{A}$ and $\bar{B}$ values with 0 to still have our unrolled $mR$ and $nR$ operations
-
-
-```python
-fn matmul[Type: DType](a: Matrix[Type], b: Matrix[Type]) -> Matrix[Type]:
-    if a.cols != b.rows:
-        print("A cols and B rows have to be equal")
-        return Matrix[Type](0, 0)
-
-    var N = a.rows
-    var M = b.cols
-    var K = a.cols
-
-    var res = Matrix[Type](N, M)
-
-    alias mR_nR = get_nr_mr[Type]()
-    # here we say a is size (n, k) and b is size (k, m), so mR belongs to b
-    alias mR = mR_nR[0]
-    alias nR = mR_nR[1]
-
-    var blockA_buffer = Matrix[Type](nR, K)
-    var blockB_buffer = Matrix[Type](K, mR)
-
-    for mr in range(0, M, mR):
-        var m = min(mR, M - mr)
-        var blockB = UnsafePointer(to=b)
-
-        var mr_blockB = mr
-        if m != mR:
-            copy_pad_blockB[mR](blockB_buffer, b, mr, m, K)
-            blockB = UnsafePointer(to=blockB_buffer)
-            mr_blockB = 0
-
-        for nr in range(0, N, nR):
-            var n = min(nR, N - nr)
-            var blockA = UnsafePointer(to=a)
-
-            var nr_blockA = nr
-            if n != nR:
-                copy_pad_blockA[nR](blockA_buffer, a, nr, n, K)
-                blockA = UnsafePointer(to=blockA_buffer)
-                nr_blockA = 0
-
-            micro_kernel[mR, nR](
-                res, blockA[], blockB[], nr, mr, nr_blockA, mr_blockB, K, n, m
-            )
-
-    return res^
-```
-
-
 ## GEMM Micro-Kernel
 
 Now after seeing about the loop reordering and SIMD operations, let’s talk about what is the most important part of matrix multiplication: the **micro-kernel** (or accumulator, etc...). The idea here is that we work on a block of size $(mR \times nR)$, which we’ll call $\bar{C}$, and instead of working directly with the full $A$ and $B$ matrices, we work on smaller submatrices $\bar{A}$ ($nR \times K$) and $\bar{B}$ ($mR \times K$).
@@ -270,7 +144,7 @@ But now let’s consider the idea of doing **outer products**. So Instead of acc
 
 ### Determining $mR$ and $nR$
 
-To figure out the sizes of $mR$ and $nR$, we need to think about how many SIMD registers (e.g., YMM registers) we have. For example, on an M1 processor, we have 32 YMM registers. Based on what we said earlier, we need:
+To figure out the sizes of $mR$ and $nR$, we need to think about how many SIMD registers (e.g., Vector registers) we have. For example, on an M1 processor, we have 32 Vector registers. Based on what we said earlier, we need:
 - $mR \times nR$ registers for $\bar{C}$,
 - $mR$ registers for rows of $\bar{B}$,
 - 1 register for broadcasting values from columns of $\bar{A}$ (since we can reuse the same register for each broadcast).
@@ -298,7 +172,7 @@ Now let’s look at the implementation of the micro-kernel. This is the core fun
 ```python
 @always_inline
 fn micro_kernel[
-    Type: DType, // mR: Int, nR: Int
+    Type: DType, //, mR: Int, nR: Int
 ](
     mut res: Matrix[Type],
     a: Matrix[Type],
@@ -311,31 +185,36 @@ fn micro_kernel[
     n: Int,
     m: Int,
 ):
-    # nR corresponds to matrix A, mR corresponds to matrix B
+    # For us we say nR is from matrix A and mR is from matrix B
+    # 1 register for broadcasted value of A, mR/NELTS registers for B and mR/NELTS * nR registers for C_accumulator
 
     alias NELTS = info.simdwidthof[Type]()
+
     alias alignment = alignof[SIMD[Type, NELTS]]()
     var c_accumulator = stack_allocation[nR * mR, Type, alignment=alignment]()
-    memset_zero[count=nR * mR](c_accumulator)
+    memset_zero[count = nR * mR](c_accumulator)
+
+    var a_vecs = InlineArray[SIMD[Type, NELTS], nR](uninitialized=True)
 
     for p in range(K):
+        
         @parameter
         for i in range(nR):
-            var a_broadcasted_register = SIMD[Type, NELTS](a[nr_a + i, p])
-
+            a_vecs[i] = a[nr_a + i, p]
+            # a_broadcasted_register = a[nr_a + i, p]
+        
+        @parameter
+        for i in range(nR):
             @parameter
             for j in range(0, mR, NELTS):
                 c_accumulator.store[width=NELTS](
                     i * mR + j,
-                    fma(
-                        a_broadcasted_register,
-                        b.load[NELTS](p, mr_b + j),
-                        c_accumulator.load[width=NELTS](i * mR + j)
-                    )
+                    fma(a_vecs[i], b.load[NELTS](p, mr_b + j), c_accumulator.load[width=NELTS](i * mR + j))
                 )
 
     if m != mR:
         for i in range(n):
+
             @parameter
             fn vectorize_j_store[nelts: Int](j: Int):
                 var res_pos = (nr + i) * res.cols + mr + j
@@ -346,6 +225,7 @@ fn micro_kernel[
             vectorize[vectorize_j_store, NELTS](m)
     else:
         for i in range(n):
+
             @parameter
             for j in range(0, mR, NELTS):
                 var res_pos = (nr + i) * res.cols + mr + j
