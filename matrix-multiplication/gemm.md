@@ -326,7 +326,7 @@ Inside these panels we **reorder the data**:
 **Where do they live?**
 
 - $\bar{B}$ lives in **L2 cache**  
-- $\bar{A}$ lives in **L3 cache**  
+- $\bar{A}$ lives in **L3 cache** (but because M1 only has L1 and L2 cache A will also live in L2 cache)
 - The **panels of A** (when using them) live in **L1 cache**
 
 The idea is to **fill our caches as much as possible** so as to utilise them as much as we can.  
