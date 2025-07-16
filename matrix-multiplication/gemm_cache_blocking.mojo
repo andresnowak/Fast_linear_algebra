@@ -58,11 +58,15 @@ fn blockA_panel[
     nr: Int,
     kc: Int,
 ):
-    var panel_number = ir * kc # because we only fill kc values and because we are filling the data in an iterative way we have to move ir * kc (meaning we move (ir / nR) panels) to go the present panel and then we just fill the data one by one. (Our panels are of size nR * kc in the a buffer just to not fill the kC values as it is not necessary)
+    var panel_number = (
+        ir * kc
+    )  # because we only fill kc values and because we are filling the data in an iterative way we have to move ir * kc (meaning we move (ir / nR) panels) to go the present panel and then we just fill the data one by one. (Our panels are of size nR * kc in the a buffer just to not fill the kC values as it is not necessary)
     var panel_position = 0
 
     for p in range(kc):
-        for i in range(nr): # iterate the panel by rows so as to convert this rows to connect them in a row major way
+        for i in range(
+            nr
+        ):  # iterate the panel by rows so as to convert this rows to connect them in a row major way
             blockA_buffer.data[ir * kc + panel_position] = a[
                 i + ir + ic, pc + p
             ]
@@ -100,18 +104,34 @@ fn blockB_panel[
     mr: Int,
     kc: Int,
 ):
-    var panel_number = jr * kc # because we only fill kc values and because we are filling the data in an iterative way we have to move jr * kc (meaning we move (jr / mR) panels) to go the present panel and then we just fill the data one by one. (Our panels are of size nR * kc in the a buffer just to not fill the kC values as it is not necessary)
+    alias NELTS = info.simdwidthof[Type]()
+
+    var panel_number = (
+        jr * kc
+    )  # because we only fill kc values and because we are filling the data in an iterative way we have to move jr * kc (meaning we move (jr / mR) panels) to go the present panel and then we just fill the data one by one. (Our panels are of size nR * kc in the a buffer just to not fill the kC values as it is not necessary)
     var panel_position = 0
 
     for p in range(kc):
-        for j in range(mr):
-            blockB_buffer.data[panel_number + panel_position] = b[
-                p + pc, j + jc + jr
-            ]
-            panel_position += 1
-        for j in range(mr, mR):
-            blockB_buffer.data[panel_number + panel_position] = 0
-            panel_position += 1
+
+        @parameter
+        fn vectorize_j[nelts: Int](j: Int):
+            blockB_buffer.data.store[width=nelts](
+                panel_number + panel_position,
+                b.load[nelts](p + pc, j + jc + jr),
+            )
+            panel_position += nelts
+
+        vectorize[vectorize_j, NELTS](mr)
+
+        @parameter
+        fn copy_pad[nelts: Int](j: Int):
+            # for j in range(mr, mR):
+            blockB_buffer.data.store[width=nelts](
+                panel_number + panel_position, 0
+            )
+            panel_position += nelts
+
+        vectorize[copy_pad, NELTS](mR - mr)
 
 
 fn blockB_packed[
@@ -154,7 +174,6 @@ fn micro_kernel[
 
     var a_vecs = InlineArray[SIMD[Type, NELTS], nR](uninitialized=True)
 
-
     count_b_position = 0
     count_a_position = 0
 
@@ -181,12 +200,10 @@ fn micro_kernel[
                         b.data.load[width=NELTS](
                             panel_b_number + (count_b_position + j)
                         ),
-                        c_accumulator.load[width=NELTS](
-                            i * mR + j
-                        ),
+                        c_accumulator.load[width=NELTS](i * mR + j),
                     ),
                 )
-            
+
         count_b_position += mR
 
     if mr != mR:
