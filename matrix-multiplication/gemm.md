@@ -292,3 +292,292 @@ fn matmul[Type: DType](a: Matrix[Type], b: Matrix[Type]) -> Matrix[Type]:
 
     return res
 ```
+
+
+## GEMM Cache Blocking (BLIS-style 5-loop GEMM)
+
+Now before parallelization there is a last important part that has to do with the memory hierarchy: **cache blocking**.  
+Loading values from RAM is slow (~100 ns), while L3 cache is ~20 ns, L2 ~10 ns, and L1 ~1 ns.  
+So if we can have a big chunk of the values that we will be reutilizing in our operations, why don’t we first load a part of our matrices into a copy that is of a smaller size (as caches are smaller than our RAM) and keep this data in faster memory for our operations?  
+Remember that our data will be used in multiple operations: a **column (vertical)** of A will be used by the **whole row (horizontal)** of B, and since we are doing micro-kernels, in each micro-kernel we will be reutilising these rows and columns.
+
+This is the **BLIS-style 5-loop GEMM**.
+
+### The Blocking Idea
+
+We divide our A and B matrices into cache blocks:
+
+- $\bar{A}$ of size $n_C \times k_C$  
+- $\bar{B}$ of size $k_C \times m_C$
+
+These blocks are further divided into **panels**:
+
+- $\bar{A}$ panels of size $n_R \times k_C$  
+- $\bar{B}$ panels of size $k_C \times m_R$
+
+Inside these panels we **reorder the data**:
+
+- **Matrix A** is traversed **column-wise**, but stored **row-major**, so we are not utilising the cache lanes when loading our values.  
+  → In our panels of $\bar{A}$ we put the data in a continuous way by putting our columns of size $n_R$ in a row-major way `[nR, nR, nR, ...]`.
+
+- **Matrix B** is traversed **row-wise**, but stored **row-major**, so each time we iterate $m_R$ and go to the next row in the panel we have to jump positions in memory.  
+  → Instead, we save our rows of size $m_R$ contiguously in our panels.
+
+**Where do they live?**
+
+- $\bar{B}$ lives in **L2 cache**  
+- $\bar{A}$ lives in **L3 cache**  
+- The **panels of A** (when using them) live in **L1 cache**
+
+The idea is to **fill our caches as much as possible** so as to utilise them as much as we can.  
+We want A panels on L1 cache because the values of A are the ones we **broadcast** when using the registers, so there are **fewer values in the registers** being used compared to B.  
+Therefore, A needs L1 cache more than B panels; B lives mostly in the registers so it doesn't need L1 cache as much.
+
+### Choosing the Block Sizes
+
+```python
+fn get_nc_mc_kc[Type: DType]() -> Tuple[Int, Int, Int]:
+    # mr is always a multiple of simdwidth
+    if Type == DType.float64 or Type == DType.int64:
+        return (1000, 1000, 1000)
+    if Type == DType.float32 or Type == DType.int32:
+        return (1020, 1024, 1000)
+    if Type == DType.float16 or Type == DType.int16 or Type == DType.bfloat16:
+        return (1200, 1024, 1000)
+    if Type == DType.int8:
+        return (1300, 1024, 1000)  # return (16, 28)
+
+    return (0, 0, 0)
+```
+
+These numbers are tuned so that:
+
+- $k_C$ keeps the working set of $\bar{B}$ under the L2 capacity.  
+- $n_C$ and $m_C$ keep the working set of $\bar{A}$ under the L3 capacity.  
+- $n_R$ and $m_R$ (from the micro-kernel) fit the L1 and register file.
+
+### Packing the Panels
+
+We **pack** the data into temporary buffers (`blockA_buffer`, `blockB_buffer`) before calling the micro-kernel.
+
+#### Packing A
+
+```python
+fn blockA_panel[
+    Type: DType, //, nC: Int, kC: Int, nR: Int
+](
+    mut blockA_buffer: Matrix[Type],
+    a: Matrix[Type],
+    ic: Int,
+    pc: Int,
+    ir: Int,
+    nr: Int,
+    kc: Int,
+):
+    var panel_number = (
+        ir * kc
+    )  # because we only fill kc values and because we are filling the data in an iterative way we have to move ir * kc (meaning we move (ir / nR) panels) to go the present panel and then we just fill the data one by one. (Our panels are of size nR * kc in the a buffer just to not fill the kC values as it is not necessary)
+    var panel_position = 0
+
+    for p in range(kc):
+        for i in range(
+            nr
+        ):  # iterate the panel by rows so as to convert this rows to connect them in a row major way
+            blockA_buffer.data[ir * kc + panel_position] = a[
+                i + ir + ic, pc + p
+            ]
+            panel_position += 1
+
+        for i in range(nr, nR):
+            blockA_buffer.data[ir * kc + panel_position] = 0
+            panel_position += 1
+```
+
+#### Packing B
+
+```python
+fn blockB_panel[
+    Type: DType, //, mC: Int, kC: Int, mR: Int
+](
+    mut blockB_buffer: Matrix[Type],
+    b: Matrix[Type],
+    jc: Int,
+    pc: Int,
+    jr: Int,
+    mr: Int,
+    kc: Int,
+):
+    alias NELTS = info.simdwidthof[Type]()
+
+    var panel_number = (
+        jr * kc
+    )  # because we only fill kc values and because we are filling the data in an iterative way we have to move jr * kc (meaning we move (jr / mR) panels) to go the present panel and then we just fill the data one by one. (Our panels are of size nR * kc in the a buffer just to not fill the kC values as it is not necessary)
+    var panel_position = 0
+
+    for p in range(kc):
+
+        @parameter
+        fn vectorize_j[nelts: Int](j: Int):
+            blockB_buffer.data.store[width=nelts](
+                panel_number + panel_position,
+                b.load[nelts](p + pc, j + jc + jr),
+            )
+            panel_position += nelts
+
+        vectorize[vectorize_j, NELTS](mr)
+
+        @parameter
+        fn copy_pad[nelts: Int](j: Int):
+            # for j in range(mr, mR):
+            blockB_buffer.data.store[width=nelts](
+                panel_number + panel_position, 0
+            )
+            panel_position += nelts
+
+        vectorize[copy_pad, NELTS](mR - mr)
+```
+
+### Putting It All Together
+
+The **5-loop structure** (BLIS-style) becomes:
+
+```python
+fn matmul[Type: DType](a: Matrix[Type], b: Matrix[Type]) -> Matrix[Type]:
+    if a.cols != b.rows:
+        print("A cols and B rows have to be equal")
+        return Matrix[Type](0, 0)
+
+    var N = a.rows
+    var M = b.cols
+    var K = a.cols
+
+    var res = Matrix[Type](N, M)
+
+    alias mR_nR = get_mr_nr[Type]()
+    # here we say a is size (n, k) and b is size (k, m), so mR belongs to b
+    alias mR = mR_nR[0]
+    alias nR = mR_nR[1]
+
+    alias nC_mC_kC = get_nc_mc_kc[Type]()
+    alias nC = nC_mC_kC[0]
+    alias mC = nC_mC_kC[1]
+    alias kC = nC_mC_kC[2]
+
+    var blockA_buffer = Matrix[Type](nC, kC)
+    var blockB_buffer = Matrix[Type](kC, mC)
+
+    for ic in range(0, N, nC):
+        var nc = min(nC, N - ic)
+        for pc in range(0, K, kC):
+            var kc = min(kC, K - pc)
+
+            blockA_packed[nC, kC, nR](blockA_buffer, a, ic, pc, nc, kc)
+            for jc in range(0, M, mC):
+                var mc = min(mC, M - jc)
+
+                blockB_packed[mC, kC, mR](blockB_buffer, b, jc, pc, mc, kc)
+                for ir in range(0, nc, nR):
+                    var nr = min(nR, nc - ir)
+
+                    for jr in range(0, mc, mR):
+                        var mr = min(mR, mc - jr)
+
+                        micro_kernel[mR, nR](
+                            res,
+                            blockA_buffer,
+                            blockB_buffer,
+                            ir,
+                            jr,
+                            kc,
+                            nr,
+                            mr,
+                        )
+
+    return res
+```
+
+### Mathematical Description of Cache Blocking
+
+We start with  
+$A\in\mathbb{R}^{N\times K}$,  
+$B\in\mathbb{R}^{K\times M}$,  
+$C\in\mathbb{R}^{N\times M}$.
+
+Choose block sizes $(n_C,k_C,m_C)$ and panel sizes $(n_R,m_R)$.
+
+1. **Partition into cache blocks**  
+   For any element indices $(i,p,j)$ define block‐indices and remainders:
+$$
+     i_b = \left\lfloor \frac{i}{n_C}\right\rfloor,\quad
+     r   = i \bmod n_C,
+     \qquad
+     p_b = \left\lfloor \frac{p}{k_C}\right\rfloor,\quad
+     s   = p \bmod k_C,
+     \qquad
+     j_b = \left\lfloor \frac{j}{m_C}\right\rfloor,\quad
+     t   = j \bmod m_C.
+   $$
+   (r, s, t mean in which cache block we are in)
+
+   Then the cache blocks are
+   $$
+     \bar A_{i_b,p_b}[r,s]
+     = A\bigl[i_b\,n_C + r,\;p_b\,k_C + s\bigr],
+   $$
+   $$
+     \bar B_{p_b,j_b}[s,t]
+     = B\bigl[p_b\,k_C + s,\;j_b\,m_C + t\bigr].
+   $$
+
+2. **Subdivide each block into panels**  
+   Inside each $\bar A_{i_b,p_b}$ we form panels of height $n_R$:
+   $$
+     \bar A_{i_b,p_b}^{(r_b)}[u,s]
+     = \bar A_{i_b,p_b}[\,r_b\,n_R + u,\;s\,],
+     \quad
+     u=0,\dots,n_R-1,
+     \quad
+     r_b=0,\dots,\Bigl\lceil\frac{n_C}{n_R}\Bigr\rceil-1.
+   $$
+   Inside each $\bar B_{p_b,j_b}$ we form panels of width $m_R$:
+   $$
+     \bar B_{p_b,j_b}^{(t_b)}[s,v]
+     = \bar B_{p_b,j_b}[\,s,\;t_b\,m_R + v\,],
+     \quad
+     v=0,\dots,m_R-1,
+     \quad
+     t_b=0,\dots,\Bigl\lceil\frac{m_C}{m_R}\Bigr\rceil-1.
+   $$
+
+3. **Pack panels contiguously**  
+   Let $\mathrm{vec}(\cdot)$ denote row‐major flattening. Then
+   $$
+     \widetilde A_{i_b,p_b}^{(r_b)}
+     = \mathrm{vec}\bigl(\bar A_{i_b,p_b}^{(r_b)}\bigr)
+     \;\in\;\mathbb{R}^{\,n_R\times k_C},
+   $$
+   $$
+     \widetilde B_{p_b,j_b}^{(t_b)}
+     = \mathrm{vec}\bigl(\bar B_{p_b,j_b}^{(t_b)}\bigr)
+     \;\in\;\mathbb{R}^{\,k_C\times m_R}.
+   $$
+
+With these definitions, the BLIS‐style 5‐loop GEMM computes
+$$
+  C_{i,j}
+  \;+\!=\;
+  \sum_{p_b}
+  \sum_{r_b,t_b}
+    \bigl(\widetilde A_{i_b,p_b}^{(r_b)}\bigr)^{T}
+    \,\widetilde B_{p_b,j_b}^{(t_b)},
+$$
+where 
+$$
+  i = i_b\,n_C + r_b\,n_R + u,\quad
+  j = j_b\,m_C + t_b\,m_R + v.
+$$
+This reorganises the original triple‐sum
+$$
+  C_{i,j} \;+\!=\; \sum_{p=0}^{K-1} A_{i,p}\,B_{p,j}
+$$
+into cache‐block, panel and packed‐vector accesses.
