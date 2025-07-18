@@ -35,6 +35,8 @@ fn get_mr_nr[Type: DType]() -> Tuple[Int, Int]:
 
 fn get_nc_mc_kc[Type: DType]() -> Tuple[Int, Int, Int]:
     # mr is always a multiple of simdwidth
+
+    # The M1 has an l2 cache of 12mb and each core has a l1d cache of 128kb
     if Type == DType.float64 or Type == DType.int64:
         return (1000, 1000, 1000)
     if Type == DType.float32 or Type == DType.int32:
@@ -42,7 +44,7 @@ fn get_nc_mc_kc[Type: DType]() -> Tuple[Int, Int, Int]:
     if Type == DType.float16 or Type == DType.int16 or Type == DType.bfloat16:
         return (1200, 1024, 1000)
     if Type == DType.int8:
-        return (1300, 1024, 1000)
+        return (1300, 1024, 1500)
 
     return (0, 0, 0)
 

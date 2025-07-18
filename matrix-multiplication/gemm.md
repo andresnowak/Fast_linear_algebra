@@ -581,3 +581,6 @@ $$
   C_{i,j} \;+\!=\; \sum_{p=0}^{K-1} A_{i,p}\,B_{p,j}
 $$
 into cache‐block, panel and packed‐vector accesses.
+
+
+**Note:** One thing you will see is that we aren't using well our caches as the M1 pro has an l2 shared cache of 12mb and each core has an l1d cache of 128 kb (and the efficiency cores has 4mb of l2 cache and 64kb of l1d cache). In reallity our calculations of the size of the cache should be done in consideration with the size of the matrix we will work with as we don't want to use 10x bigger matrices for the blocks as the matrix we will work with and we also don't want to use smaller cache blocks if we can use bigger ones because the matrices we are working with are bigger and the still have cache left to use, but for now we are using a somewhat middle ground values for our $nc$, $kc$ and $mc$ caches

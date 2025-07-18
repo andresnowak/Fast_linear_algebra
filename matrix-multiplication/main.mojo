@@ -9,3 +9,5 @@ from gemm_parallel import matmul as matmul_parallel
 fn main() raises:
     test_matmul[matmul_parallel]()
     bench_matmul[matmul_parallel]()
+    # test_matmul[matmul_cache]()
+    # bench_matmul[matmul_cache]()
