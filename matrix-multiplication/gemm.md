@@ -701,3 +701,7 @@ fn matmul[Type: DType](a: Matrix[Type], b: Matrix[Type]) -> Matrix[Type]:
 
     return res^
 ```
+
+
+## Extra
+One last thing i think is possible is to have the SIMD_WIDTH be 2x or 4x, as the cpu as I understand is capable of doing more than one SIMD instruction in one cycle
