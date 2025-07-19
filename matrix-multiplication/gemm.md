@@ -583,4 +583,121 @@ $$
 into cache‐block, panel and packed‐vector accesses.
 
 
-**Note:** One thing you will see is that we aren't using well our caches as the M1 pro has an l2 shared cache of 12mb and each core has an l1d cache of 128 kb (and the efficiency cores has 4mb of l2 cache and 64kb of l1d cache). In reallity our calculations of the size of the cache should be done in consideration with the size of the matrix we will work with as we don't want to use 10x bigger matrices for the blocks as the matrix we will work with and we also don't want to use smaller cache blocks if we can use bigger ones because the matrices we are working with are bigger and the still have cache left to use, but for now we are using a somewhat middle ground values for our $nc$, $kc$ and $mc$ caches
+**Note:** One thing you will see is that we aren't using well our caches as the M1 pro has an l2 shared cache of 12mb and each core has an l1d cache of 128 kb (and the efficiency cores has 4mb of l2 cache and 64kb of l1d cache). In reality our calculations of the size of the cache should be done in consideration with the size of the matrix we will work with as we don't want to use 10x bigger matrices for the blocks as the matrix we will work with and we also don't want to use smaller cache blocks if we can use bigger ones because the matrices we are working with are bigger and the still have cache left to use, but for now we are using a somewhat middle ground values for our $nc$, $kc$ and $mc$ caches
+
+
+## GEMM Parallel
+
+Finally we can now use parallelization.  
+What we would like to parallelize is the **packing** of our $\bar{A}$ and $\bar{B}$ cache blocks, and also the **running** of each individual micro-kernel.
+
+For the packing we just parallelize the loop iterating over each panel number.  
+For the micro-kernels, one thing we could do is parallelize the loop that walks over each cache block; the problem here is that to keep every core busy the matrix dimension divided by the cache block size must be at least the number of threads.  
+Moreover, our cache blocks have to be in the thousands to fully utilize the caches, so we would need the input dimension to be very large to keep each thread busy.  
+
+Instead we can work **inside** the micro-kernel: the sizes $nR$ and $mR$ are very small ($<30$), and in Mojo the `parallelize` call re-uses the existing thread pool—no new threads are created—so there is no overhead and we can safely parallelize inside the loops.
+
+```python
+fn blockA_packed[
+    Type: DType, //, nC: Int, kC: Int, nR: Int
+](
+    mut blockA_buffer: Matrix[Type],
+    a: Matrix[Type],
+    ic: Int,
+    pc: Int,
+    nc: Int,
+    kc: Int,
+):
+    # creating our panel of size nR * kC
+    @parameter
+    fn parallelize_panel_creation(ir_temp: Int):
+        var ir = ir_temp * nR  # The panel we are on
+    # for ir in range(0, nc, nR):  # The panel we are on
+        var nr = min(nR, nc - ir)
+        blockA_panel[nC, kC, nR](blockA_buffer, a, ic, pc, ir, nr, kc)
+
+    parallelize[parallelize_panel_creation](Int(ceil(nc / nR)), Int(ceil(nc / nR)))
+
+fn blockB_packed[
+    Type: DType, //, mC: Int, kC: Int, mR: Int
+](
+    mut blockB_buffer: Matrix[Type],
+    b: Matrix[Type],
+    jc: Int,
+    pc: Int,
+    mc: Int,
+    kc: Int,
+):
+    # creating our panel of size kC * mR
+    @parameter
+    fn parallelize_panel_creation(jr_temp: Int):
+        var jr = jr_temp * mR  # The panel we are on
+    # for jr in range(0, mc, mR):  # The panel we are on
+        var mr = min(mR, mc - jr)
+        blockB_panel[mC, kC, mR](blockB_buffer, b, jc, pc, jr, mr, kc)
+    
+    parallelize[parallelize_panel_creation](Int(ceil(mc / mR)), Int(ceil(mc / mR)))
+```
+
+```python
+fn matmul[Type: DType](a: Matrix[Type], b: Matrix[Type]) -> Matrix[Type]:
+    if a.cols != b.rows:
+        print("A cols and B rows have to be equal")
+        return Matrix[Type](0, 0)
+
+    alias NELTS = info.simdwidthof[Type]()
+
+    var N = a.rows
+    var M = b.cols
+    var K = a.cols
+
+    var res = Matrix[Type](N, M)
+
+    alias mR_nR = get_mr_nr[Type]()
+    # here we say a is size (n, k) and b is size (k, m), so mR belongs to b
+    alias mR = mR_nR[0]
+    alias nR = mR_nR[1]
+
+    alias nC_mC_kC = get_nc_mc_kc[Type]()
+    alias nC = nC_mC_kC[0]
+    alias mC = nC_mC_kC[1]
+    alias kC = nC_mC_kC[2]
+
+    var blockA_buffer = Matrix[Type](nC, kC)
+    var blockB_buffer = Matrix[Type](kC, mC)
+
+    for ic in range(0, N, nC):
+        var nc = min(nC, N - ic)
+        for pc in range(0, K, kC):
+            var kc = min(kC, K - pc)
+
+            blockA_packed[nC, kC, nR](blockA_buffer, a, ic, pc, nc, kc)
+            for jc in range(0, M, mC):
+                var mc = min(mC, M - jc)
+
+                blockB_packed[mC, kC, mR](blockB_buffer, b, jc, pc, mc, kc)
+
+                @parameter
+                fn parallelize_micro_kernels(ir_temp: Int):
+                    var ir = ir_temp * nR
+                # for ir in range(0, nc, nR):
+                    var nr = min(nR, nc - ir)
+
+                    for jr in range(0, mc, mR):
+                        var mr = min(mR, mc - jr)
+
+                        micro_kernel[mR, nR](
+                            res,
+                            blockA_buffer,
+                            blockB_buffer,
+                            ir,
+                            jr,
+                            kc,
+                            nr,
+                            mr,
+                        )
+
+                parallelize[parallelize_micro_kernels](Int(ceil(nc / nR)), Int(ceil(nc / nR)))
+
+    return res^
+```
