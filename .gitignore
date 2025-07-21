@@ -3,6 +3,7 @@
 !*/
 # Don't ignore files with extensions (contain at least one dot)
 !*.*
+!Makefile
 
 # pixi environments
 .pixi
