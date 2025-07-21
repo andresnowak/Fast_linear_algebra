@@ -1,73 +1,34 @@
-#import <Foundation/Foundation.h>
-#import <Metal/Metal.h>
 #include <iostream>
 #include <vector>
+#include <random>
+#include <chrono>
+
+#include "dot_product.h"
 
 int main() {
-    // 1) Create the Metal device & queue
-
-    // id means * (a pointer)
-    id<MTLDevice> device = MTLCreateSystemDefaultDevice();
-
-    if (!device){
-        std::cerr << "Error: this device doesn't support Metal\n";
-        return -1;
+    const std::size_t n = 4096;
+    std::mt19937 rng(42);
+    std::uniform_int_distribution<int> dist(-10.0f, 10.0f);
+    
+    std::vector<float> A(n), B(n);
+    for (std::size_t i = 0; i < n; i++) {
+        A[i] = (float)dist(rng);
+        B[i] = (float)dist(rng);
     }
 
-    // commandQueue a serial queue of command buffers (like copy, compute, render, etc..)
-    id<MTLCommandQueue> queue = [device newCommandQueue];
+    auto start = std::chrono::high_resolution_clock::now();
+    auto result_time = dot_product_mul(A, B);
+    auto result = result_time.first;
+    auto time = result_time.second;
+    auto end = std::chrono::high_resolution_clock::now();
 
-    // 2) Host data
-    std::vector<float> A{1, 2, 3, 4}, B{5, 6, 7, 8};
-    size_t n = A.size(), byteCount = n * sizeof(float);
+    std::cout << "Dot product result: " << result << std::endl;
 
-    // 3) Create the GPU buffers
-    id<MTLBuffer> bufA = [device newBufferWithBytes:A.data() length:byteCount options:MTLResourceStorageModeShared];
-    id<MTLBuffer> bufB = [device newBufferWithBytes:B.data() length:byteCount options:MTLResourceStorageModeShared];
-    id<MTLBuffer> bufOut = [device newBufferWithLength:byteCount options:MTLResourceStorageModeShared];
+    int total_flops = 2 * n;
+    auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
+    double gflops = static_cast<double>(total_flops) / time;   // GFLOP/s
 
-    // 4) Load the pre-compiled .metallib (the metal kernel)
-    NSError *error = nil;
-    NSURL *libURL = [NSURL fileURLWithPath:@"dot_product.metallib"];
-    id<MTLLibrary> lib = [device newLibraryWithURL:libURL error:&error];
+    std::cout << "GFLOPS (per second): " << gflops << std::endl;
 
-    if (!lib) {
-        std::cerr << "Library load error: " << [[error localizedDescription] UTF8String];
-
-        return -1;
-    }
-
-    id<MTLFunction> dotProductFn = [lib newFunctionWithName:@"dotProduct"];
-    id<MTLComputePipelineState> pipeline = [device newComputePipelineStateWithFunction:dotProductFn error:&error];
-
-    if (!pipeline) {
-        std::cerr << "Pipeline creation error: " << [[error localizedDescription] UTF8String];
-
-        return -1;
-    }
-
-    // 5) Encode & dispatch
-    id<MTLCommandBuffer> cmd = [queue commandBuffer];
-    id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
-    [enc setComputePipelineState:pipeline];
-    [enc setBuffer:bufA offset:0 atIndex:0];
-    [enc setBuffer:bufB offset:0 atIndex:1];
-    [enc setBuffer:bufOut offset:0 atIndex:2];
-
-    MTLSize gridSize = MTLSizeMake(n, 1, 1);
-    MTLSize threadgroupSz = MTLSizeMake(512, 1, 1);
-    [enc dispatchThreads:gridSize threadsPerThreadgroup:threadgroupSz];
-    [enc endEncoding];
-    [cmd commit];
-    [cmd waitUntilCompleted];
-
-    // 6) Read back & reduce
-    float *results = (float*)bufOut.contents;
-    float dot = 0;
-    for (size_t i = 0; i < n; ++i) {
-        dot += results[i];
-    }
-
-    std::cout << "Inner Product: " << dot << "\n";
     return 0;
 }

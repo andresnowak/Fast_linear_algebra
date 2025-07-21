@@ -16,10 +16,10 @@ Objective-c behaves like small talk where we do message passing and we are dynam
   - The `gridSize` can be defined as a 3D index space (for convenience to the programmer)
     - The `gridSize` only says how many threads we want
     - This says basically how many threads we want to use for a piece of data
-    - So basically if i have vector of 10_000 values to work with, one has to declare a grid size of (10_000, 1, 1) (and then we divide this into groups)
+    - So basically if I have vector of 10_000 values to work with, one has to declare a grid size of (10_000, 1, 1) (and then we divide this into groups)
   - The the `threadGroup` (or compute unit) is a subdivision of the logical grid we choose 
-    - it has to be less than the amount of threads we have (here we have 512)
-    - This basically does the division of our gridSize for how to use the memory, but the driver will still define the warps to use, but like if our grid size is less than 32 threads we are basically wasting a warp on this
+    - it has to be less than the amount of threads we have
+    - This basically does the division of our gridSize for how to use the memory, but the driver will still define the warps to use, but like if our grid size is less than 32 threads we are basically wasting a warp (32 threads) on this
     - The `threadGroup` also helps us define the barrier synchronization and lets schedule efficiently the work on fixed simd units
     - This also creates what is called a `threadGroup memory` , this is the cache we control that only this threads can see
 - Then `[enc dispatchThreads:gridSize threadsPerThreadgroup:threadgroupSz];`  schedules the kernel to run once for each element (`gridSize`) and how many times (`threadgroupSz`)
