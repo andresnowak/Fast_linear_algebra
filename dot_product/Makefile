@@ -1,6 +1,6 @@
 # Compiler & flags
 CXX := clang++
-CXX_FLAGS := -std=c++17 -Wall -Wextra
+CXX_FLAGS := -arch arm64 -std=c++17 -Wall -Wextra -x objective-c++ -DMACOSX_DEPLOYMENT_TARGET=10.15
 CXX_LDFLAGS := -framework Foundation -framework Metal
 
 # Files
@@ -19,7 +19,7 @@ $(METAL_LIB): $(METAL_SRC)
 	xcrun -sdk macosx metal -c $^ -o - | \
 	xcrun -sdk macosx metallib -o $@ -
 
-$(TARGET): $(OBJECTIVE_CPP_SRC) $(METAL_LIB)
+$(TARGET): $(OBJECTIVE_CPP_SRC) $(TEST_SRC) $(METAL_LIB) 
 # $@ the target of the build and $^ is the complete list of prerequisites (so here our objective c file and metal lib)
 	$(CXX) $(CXX_FLAGS) $(CXX_LDFLAGS) $(OBJECTIVE_CPP_SRC) $(TEST_SRC) -o $@
 

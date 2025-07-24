@@ -1,10 +1,10 @@
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
+#import <Metal/MTLCommandBuffer.h> // exposes GPUStartTime / GPUEndTime
 #include <iostream>
 #include <vector>
 #include <chrono>
 #include <cstdlib>
-
 #include "test.h"
 
 std::pair<float, double> test_dot_product(const std::vector<float> &a, const std::vector<float> &b, float (*reduce_function)(size_t n, float *out), int gridSizeValues[3], int threadGroupSizeValues[3]) {
@@ -34,10 +34,14 @@ std::pair<float, double> test_dot_product(const std::vector<float> &a, const std
     id<MTLBuffer> bufB = [device newBufferWithLength:byteCount options:MTLResourceStorageModePrivate];
     id<MTLBuffer> bufOut = [device newBufferWithLength:byteCount options:MTLResourceStorageModePrivate];
 
+
+    // Start command queue
+    MTLCommandBufferDescriptor *desc = [[MTLCommandBufferDescriptor alloc] init];
+    desc.retainedReferences = YES;
+
+    id<MTLCommandBuffer> cmd = [queue commandBufferWithDescriptor:desc];
+
     // Copy the data to the private buffers
-    id<MTLCommandBuffer> cmd = [queue commandBuffer];
-
-
     id<MTLBlitCommandEncoder> copyEnc = [cmd blitCommandEncoder];
 
     [copyEnc copyFromBuffer:sharedA sourceOffset:0 toBuffer:bufA destinationOffset:0 size:byteCount];
@@ -100,7 +104,13 @@ std::pair<float, double> test_dot_product(const std::vector<float> &a, const std
 
     auto end = std::chrono::high_resolution_clock::now();
 
-    auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
+    auto wallClockTime = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
 
-    return {dot, ns.count()};
+    double gpuStart = cmd.GPUStartTime;   // seconds
+    double gpuEnd   = cmd.GPUEndTime;     // seconds
+    double kernelTime    = (gpuEnd - gpuStart) * 1e9;   // nanoseconds
+
+    std::cout << gpuNs << std::endl;
+
+    return {dot, kernelTime};
 }
