@@ -5,9 +5,7 @@
 #include <chrono>
 #include <cstdlib>
 
-#include "dot_product.h"
-
-std::pair<float, double> dot_product_mul(const std::vector<float> &A, const std::vector<float> &B) {
+void test_dot_product(const std::vector &a,  const std::vector &b, float (*reduce_function)(const std::vector &a, const std::vector &b, float* out), float gridSize[3], float threadGroupSize[3]) {
     // 1) Create the Metal device & queue
 
     // id means * (a pointer to an objc object, it is the universal object pointer type)
@@ -91,10 +89,12 @@ std::pair<float, double> dot_product_mul(const std::vector<float> &A, const std:
     // 6) Read back & reduce
     float *results = (float*)sharedOut.contents;
 
-    float dot = 0;
-    for (size_t i = 0; i < n; ++i) {
-        dot += results[i];
+    if (reduce_function != NULL) {
+        float dot = reduce_function(a, b, results)
+    } else {
+        
     }
+
     auto end = std::chrono::high_resolution_clock::now();
 
     auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);

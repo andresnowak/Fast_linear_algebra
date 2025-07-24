@@ -12,8 +12,8 @@ Then in our metal kernel we will be doing the multiplication of of our two vecto
 kernel void dotProduct(const device float* a [[ buffer(0) ]],
                          const device float* b [[ buffer(1) ]],
                          device float* out [[ buffer(2) ]],
-                        uint id [[ thread_position_in_grid ]]) {
-    out[id] = a[id] * b[id];                        
+                        uint3 id [[ thread_position_in_grid ]]) {
+    out[id.x] = a[id.x] * b[id.x];                        
 }
 ```
 
@@ -28,15 +28,17 @@ We are instead doing parallel group between what we call grids
 
 ```objective-c
 MTLSize gridSize = MTLSizeMake(n, 1, 1); // (x, y, z)
-MTLSize threadgroupSz = MTLSizeMake(512, 1, 1); // (x, y, z)
+MTLSize threadgroupSz = MTLSizeMake(256, 1, 1); // (x, y, z)
 [enc dispatchThreads:gridSize threadsPerThreadgroup:threadgroupSz]
 ```
 
 - What we are doing here is that first we are going to create a 3D grid as a 1 dimensional line of n values (lets say 4096 values) ```MTLSize gridSize = MTLSizeMake(n, 1, 1);``` (because this is our total amount of values in our vectors)
-- Then we will divide this grid into our threadGroups (this can't be bigger than the amount of threads we have, in this case we have 512 threads in the M1 pro), what this thread groups have is that its memory is shared 
+- Then we will divide this grid into our threadGroups (this can't be bigger than the amount of threads we have, in this case we have 2048 (or 1024 not sure) threads in the M1 pro)
+  - This thread groups will have a shared memory
+    - Based on this the best thread groups sizes here are around 256 because
 
 
 
 
 
-Now the reduction we will be doing it on the cpu
+For this simple one for now we will be doing the reduction on the CPU

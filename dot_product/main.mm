@@ -5,9 +5,17 @@
 
 #include "dot_product.h"
 
+void print_vector(const std::vector<float> &a) {
+    for (const auto& x : a) {
+        std::cout << x << ", ";
+    }
+
+    std::cout << std::endl;
+}
+
 int main() {
-    const std::size_t n = 4096;
-    std::mt19937 rng(42);
+    const std::size_t n = 1048576;
+    std::mt19937 rng(41);
     std::uniform_int_distribution<int> dist(-10.0f, 10.0f);
     
     std::vector<float> A(n), B(n);

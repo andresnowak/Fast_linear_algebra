@@ -10,14 +10,19 @@ Programming massively parallel processors
 3. gpus can have a higher arithmetic intensity as one needs 8x more computations per byte transfer $\text{A.I} = \frac{\text{FLOPs}}{\text{Total data movements (Bytes)}}$
    1. A low arithmetic intensity means the the program is spending more time transfering data than performing computations (This suggests it is memory bound, that it has limited memory bandwith, so it has to do more data movements)
    2. Majority of algorithms can have the theoretical Arithmetic intensity of the GPUs, but some exceptions are things like Matmul 
-
-
-
-3. Talking about M1 gpu this one has simd cores (I think 16 cores for M1 pro), then each simd core has simd groups (or warps in nvidia) and each of this simd groups has 32 simd lanes (so each group can execute an instruction in 32 values in parallel. And each lane has its own private register file of scalar values). *So we should have 512 FP32 ops*
-4. and each lane has a register file size of 256 32bit registers?
+4. For M series processors, using the shared memory makes it so we don't need to copy the data, but it still adds overhead
+   1. Like having the memory controller has to arbitrate between GPU, CPU and display engine, so here we have that the buffers compete with other traffic
+   2. Shared memory is page aligned
+   3. *So using instead a private buffer* by doing a blit copy can make it so the kernels can run faster as we don't need CPU cache coherency anymore, paging, etc.
+5. Compute unit (a physical core)
+   1. apple threadgroup unit
+   2. Nvidia SM (and we have read in the programming parallel processors that SM is composed of multiple cuda cores that are the ones that execute the threads, and at least in the architecture they show each SM is composed of two blocks and this two blocks share a cache)
+6. A register file is per compute unit (not per thread)
+   1. So for example if each thread has 256 registers and there are 32 lanes (threads) and they are of 4 bytes the registers (float32) then we have 256 x 32 x 4 = 32kb
+      1. if our threadgroup surpasses this then the registers could spill into global memory
 
 ### M1 pro
-[https://github.com/philipturner/metal-benchmarks](Apple gpu microarchitecture information)
+[Apple gpu microarchitecture information](https://github.com/philipturner/metal-benchmarks)
 
 - The gpu here has 16 cores (A GPU core is analogous to a SM; streaming multiprocessor)
 - Each core has 128 scalar ALUs
@@ -28,4 +33,6 @@ Programming massively parallel processors
       - Quardruple dispatch (4 warps per cycle): here we have perfect register pressure, but this one is not common to have (this is from 4 SIMDs) to not have register file bottleneck
       - Dual dispatch (2 warps per cycle): here the 4 SIMD units are split into two pairs (this is from 2 SIMDs)
       - And single dispatch: this is from 1 SIMD
-  - A core can have 768 threads? (hardware sweet spot occupancy)
+- A core can have 768 threads? (hardware sweet spot occupancy)
+- We have around ~5 TFLOPs (16cores * 128alus * 1.3GHZ * 2 (as FMA counts as 2 FLOPs)
+- Max threadgroup size is <= 1024 threads
