@@ -7,7 +7,7 @@
 #include <cstdlib>
 #include "test.h"
 
-std::pair<float, double> test_dot_product(const std::vector<float> &a, const std::vector<float> &b, float (*reduce_function)(size_t n, float *out), int gridSizeValues[3], int threadGroupSizeValues[3]) {
+std::pair<float, double> test_dot_product(const std::vector<float> &a, const std::vector<float> &b, float (*reduce_function)(size_t n, float *out), int gridSizeValues[3], int threadGroupSizeValues[3], NSString *libName) {
     // 1) Create the Metal device & queue
     id<MTLDevice> device = MTLCreateSystemDefaultDevice(); // id means * (a pointer to an objc object, it is the universal object pointer type)
 
@@ -44,7 +44,7 @@ std::pair<float, double> test_dot_product(const std::vector<float> &a, const std
 
     // 5) Load the pre-compiled .metallib (the metal kernel)
     NSError *error = nil;
-    NSURL *libURL = [NSURL fileURLWithPath:@"dot_product.metallib"];
+    NSURL *libURL = [NSURL fileURLWithPath:libName];
     id<MTLLibrary> lib = [device newLibraryWithURL:libURL error:&error];
 
     if (!lib) {

@@ -20,12 +20,16 @@ Programming massively parallel processors
 6. A register file is per compute unit (not per thread)
    1. So for example if each thread has 256 registers and there are 32 lanes (threads) and they are of 4 bytes the registers (float32) then we have 256 x 32 x 4 = 32kb
       1. if our threadgroup surpasses this then the registers could spill into global memory
+7. FP32 pipes can run two FP16 operations by doing "emulation" or also called "packed math"
 
 ### M1 pro
 [Apple gpu microarchitecture information](https://github.com/philipturner/metal-benchmarks)
 
+- Apple executes 32 threads in lock-step
+  - 
+- Comparing to Cuda apple has SIMD not SIMT (as the threads can't diverge, so it is more difficult with threads that access scattered memory addresses)
 - The gpu here has 16 cores (A GPU core is analogous to a SM; streaming multiprocessor)
-- Each core has 128 scalar ALUs
+- Each core has 128 scalar ALUs (so we have 16 * 128 = 2048 alus)
 - Each ALU is grouped into 4 SIMD units where each SIMD units has 32 threads
   - So like every core has 4 schedulers, so every clock a scheduler can pick a warp and issue one instruction to the SIMD unit (well not SIMD exactly because the threads can work on data that is at random positions)
     - So each core can have 4 warps per cycle
@@ -36,3 +40,8 @@ Programming massively parallel processors
 - A core can have 768 threads? (hardware sweet spot occupancy)
 - We have around ~5 TFLOPs (16cores * 128alus * 1.3GHZ * 2 (as FMA counts as 2 FLOPs)
 - Max threadgroup size is <= 1024 threads
+- It seems each SIMD group runs 64 threads in lock-step
+- Register file size is ~208 KB
+- Each SIMD (The group of 4 x 32 threads = 128 scalar Alus) has 256 vector registers
+  - This way by having more vector registers than threads we can keep many live values without spilling into memory
+

@@ -2,6 +2,9 @@
 #include <vector>
 #include <random>
 #include <chrono>
+#include <algorithm>
+#include <numeric>
+#include <iomanip>
 
 #include "dot_product.h"
 
@@ -13,33 +16,80 @@ void print_vector(const std::vector<float> &a) {
     std::cout << std::endl;
 }
 
-int main() {
-    const std::size_t n = 1048576;
+template <typename T>
+std::vector<T> random_vector(size_t n, float low = -10, float high = 10) {
     std::mt19937 rng(41);
-    std::uniform_int_distribution<int> dist(-10.0f, 10.0f);
-    
-    std::vector<float> A(n), B(n);
-    for (std::size_t i = 0; i < n; i++) {
-        A[i] = (float)dist(rng);
-        B[i] = (float)dist(rng);
+    std::uniform_int_distribution<int> dist(low, high);
+    std::vector<T> v(n);
+    for (auto &x : v) {
+        x = (float)dist(rng);
     }
 
-    // Wall clock time
-    auto start = std::chrono::high_resolution_clock::now();
-    auto result_time = dot_product_mul(A, B);
-    auto result = result_time.first;
-    auto time = result_time.second; // Time of cpu reduce + gpu kernel runtime
-    auto end = std::chrono::high_resolution_clock::now();
+    return v;
+}
 
+int main() {
+    const size_t N = 1048576;
+    const int warmup = 3;
+    const int measured_iterations = 20;
+    const int total_runs = warmup + measured_iterations;
+
+    std::vector<float> A = random_vector<float>(N);
+    std::vector<float> B = random_vector<float>(N);
+
+    std::vector<double> kernel_runtimes;
+    kernel_runtimes.reserve(measured_iterations); 
+    
+    std::vector<double> wall_clock_times;
+    wall_clock_times.reserve(measured_iterations);
+
+    for (int run = 0; run < total_runs; ++run) {
+        // Wall clock time
+        auto start = std::chrono::high_resolution_clock::now();
+    
+        auto [result, time] = dot_product_mul(A, B);
+
+        auto end = std::chrono::high_resolution_clock::now();
+
+        if (run >= warmup) {
+            wall_clock_times.push_back(std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count());
+            kernel_runtimes.push_back(time); // Time of cpu reduce + gpu kernel runtime
+        }
+    }
+
+    auto [result, time] = dot_product_mul(A, B);
     std::cout << "Dot product result: " << result << std::endl;
 
-    int total_flops = 2 * n;
-    auto wallClockTime = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
-    double gflops = static_cast<double>(total_flops) / time;   // GFLOP/s
+    // Get statistics
+    std::sort(kernel_runtimes.begin(), kernel_runtimes.end());
+    std::sort(wall_clock_times.begin(), wall_clock_times.end());
 
-    std::cout << "GFLOPS (per second): " << gflops << std::endl;
+    double median_kernel_runtimes = 0;
+    double median_wall_clock_times = 0;
+    if (measured_iterations % 2 == 0) {
+        median_kernel_runtimes = (kernel_runtimes[measured_iterations / 2] + kernel_runtimes[measured_iterations / 2 + 1]) / 2;
+        median_wall_clock_times = (wall_clock_times[measured_iterations / 2] + wall_clock_times[measured_iterations / 2 + 1]) / 2;
+    } else {
+        median_kernel_runtimes = kernel_runtimes[(measured_iterations + 1) / 2];
+        median_wall_clock_times = wall_clock_times[(measured_iterations + 1) / 2];
+    }
 
-    std::cout << "Wall clock time: " << wallClockTime.count() << std::endl;
+    double mean_kernel_runtimes = std::accumulate(kernel_runtimes.begin(), kernel_runtimes.end(), 0.0) / kernel_runtimes.size();
+    double mean_wall_clock_times = std::accumulate(wall_clock_times.begin(), wall_clock_times.end(), 0.0) / wall_clock_times.size();
+
+
+    const std::uint64_t flops = 2 * N;          // multiply-add
+    double medianGflops = flops / median_kernel_runtimes;   // 1 ns = 1e-9 s
+    double meanGflops   = flops / mean_kernel_runtimes;
+
+    std::cout << std::fixed << std::setprecision(3);
+    std::cout << "Median kernel time : " << median_kernel_runtimes / 1e6 << " ms\n";
+    std::cout << "Mean   kernel time : " << mean_kernel_runtimes   / 1e6 << " ms\n";
+    std::cout << "Median throughput  : " << medianGflops << " GFLOP/s\n";
+    std::cout << "Mean   throughput  : " << meanGflops   << " GFLOP/s\n";
+
+    std::cout << "Median wall clock time: " << median_wall_clock_times / 1e6 << "ms\n";
+    std::cout << "Mean wall clock time: " << mean_wall_clock_times / 1e6 << "ms\n";
 
     return 0;
 }

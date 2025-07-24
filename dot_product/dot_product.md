@@ -33,12 +33,28 @@ MTLSize threadgroupSz = MTLSizeMake(256, 1, 1); // (x, y, z)
 ```
 
 - What we are doing here is that first we are going to create a 3D grid as a 1 dimensional line of n values (lets say 4096 values) ```MTLSize gridSize = MTLSizeMake(n, 1, 1);``` (because this is our total amount of values in our vectors)
-- Then we will divide this grid into our threadGroups (this can't be bigger than the amount of threads we have, in this case we have 2048 (or 1024 not sure) threads in the M1 pro)
+- Then we will divide this grid into our threadGroups (this can't be bigger than the amount of threads we have, in this case we have 2048 (or 1024 not completely sure) threads in the M1 pro)
   - This thread groups will have a shared memory
-    - Based on this the best thread groups sizes here are around 256 because
+    - Based on this the best thread groups sizes here are around 256 because 
+- Dot-product is a very compute bound problem (as there is very little operations we can do)
+  - Using (256 threads = 8 warps (of 32 threads each) = 2 warps per SIMD * 4 SIMDs)
+  - using 4 warps wouldn't help
 
 
 
 
 
 For this simple one for now we will be doing the reduction on the CPU
+
+```c++
+  auto reduce = [](size_t n, float* results) -> float {
+      float dot = 0;
+
+      #pragma omp parallel for reduction(+:dot)
+      for (size_t i = 0; i < n; ++i) {
+          dot += results[i];
+      }
+
+      return dot;
+  };
+```
