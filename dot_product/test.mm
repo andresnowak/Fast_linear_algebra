@@ -5,7 +5,9 @@
 #include <chrono>
 #include <cstdlib>
 
-void test_dot_product(const std::vector &a,  const std::vector &b, float (*reduce_function)(const std::vector &a, const std::vector &b, float* out), float gridSize[3], float threadGroupSize[3]) {
+#include "test.h"
+
+std::pair<float, double> test_dot_product(const std::vector<float> &a, const std::vector<float> &b, float (*reduce_function)(size_t n, float *out), int gridSizeValues[3], int threadGroupSizeValues[3]) {
     // 1) Create the Metal device & queue
 
     // id means * (a pointer to an objc object, it is the universal object pointer type)
@@ -20,12 +22,12 @@ void test_dot_product(const std::vector &a,  const std::vector &b, float (*reduc
     id<MTLCommandQueue> queue = [device newCommandQueue];
 
     // 2) Host data
-    size_t n = A.size(), byteCount = n * sizeof(float);
+    size_t n = a.size(), byteCount = n * sizeof(float);
 
     // 3) Create the GPU buffers
     // id<MTLBuffer> bufA = [device newBufferWithBytes:A.data() length:byteCount options:MTLResourceStorageModeShared];
-    id<MTLBuffer> sharedA = [device newBufferWithBytes:A.data() length:byteCount options:MTLResourceStorageModeShared];
-    id<MTLBuffer> sharedB = [device newBufferWithBytes:B.data() length:byteCount options:MTLResourceStorageModeShared];
+    id<MTLBuffer> sharedA = [device newBufferWithBytes:a.data() length:byteCount options:MTLResourceStorageModeShared];
+    id<MTLBuffer> sharedB = [device newBufferWithBytes:b.data() length:byteCount options:MTLResourceStorageModeShared];
     id<MTLBuffer> sharedOut = [device newBufferWithLength:byteCount options:MTLResourceStorageModeShared];
 
     id<MTLBuffer> bufA = [device newBufferWithLength:byteCount options:MTLResourceStorageModePrivate];
@@ -71,8 +73,8 @@ void test_dot_product(const std::vector &a,  const std::vector &b, float (*reduc
     [enc setBuffer:bufB offset:0 atIndex:1];
     [enc setBuffer:bufOut offset:0 atIndex:2];
 
-    MTLSize gridSize = MTLSizeMake(n, 1, 1); // (x, y, z)
-    MTLSize threadgroupSz = MTLSizeMake(256, 1, 1); // (x, y, z)
+    MTLSize gridSize = MTLSizeMake(gridSizeValues[0], gridSizeValues[1], gridSizeValues[2]); // (x, y, z)
+    MTLSize threadgroupSz = MTLSizeMake(threadGroupSizeValues[0], threadGroupSizeValues[1], threadGroupSizeValues[2]); // (x, y, z)
     [enc dispatchThreads:gridSize threadsPerThreadgroup:threadgroupSz];
     [enc endEncoding];
 
@@ -89,10 +91,11 @@ void test_dot_product(const std::vector &a,  const std::vector &b, float (*reduc
     // 6) Read back & reduce
     float *results = (float*)sharedOut.contents;
 
+    float dot = 0;
     if (reduce_function != NULL) {
-        float dot = reduce_function(a, b, results)
+        dot = reduce_function(n, results);
     } else {
-        
+        // TODO: grab values directly from result
     }
 
     auto end = std::chrono::high_resolution_clock::now();
