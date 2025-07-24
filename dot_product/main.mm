@@ -24,19 +24,22 @@ int main() {
         B[i] = (float)dist(rng);
     }
 
+    // Wall clock time
     auto start = std::chrono::high_resolution_clock::now();
     auto result_time = dot_product_mul(A, B);
     auto result = result_time.first;
-    auto time = result_time.second;
+    auto time = result_time.second; // Time of cpu reduce + gpu kernel runtime
     auto end = std::chrono::high_resolution_clock::now();
 
     std::cout << "Dot product result: " << result << std::endl;
 
     int total_flops = 2 * n;
-    auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
+    auto wallClockTime = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
     double gflops = static_cast<double>(total_flops) / time;   // GFLOP/s
 
     std::cout << "GFLOPS (per second): " << gflops << std::endl;
+
+    std::cout << "Wall clock time: " << wallClockTime.count() << std::endl;
 
     return 0;
 }
