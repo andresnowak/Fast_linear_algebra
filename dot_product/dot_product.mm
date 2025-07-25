@@ -33,6 +33,19 @@ std::pair<float, double> dot_product_mul_reduce(const std::vector<float> &a, con
 
     int gridSize[3] = {static_cast<int>(n), 1, 1};
     int threadGroupSize[3] = {256, 1, 1};
-    return test_dot_product(a, b, NULL, gridSize, threadGroupSize, @"dot_product_mul_reduce.metallib");
+
+    auto reduce = [](size_t n, float* results) -> float {
+        float dot = 0;
+
+        // #pragma omp parallel for reduction(+:dot) schedule(dynamic, 10) // change the chunk sizes
+        #pragma omp parallel for reduction(+:dot)
+        for (size_t i = 0; i < ceil(n / 256.0); ++i) {
+            dot += results[i];
+        }
+
+        return dot;
+    };
+
+    return test_dot_product(a, b, reduce, gridSize, threadGroupSize, @"dot_product_mul_reduce.metallib");
 }
 

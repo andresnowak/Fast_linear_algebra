@@ -56,6 +56,9 @@ std::pair<float, double> test_dot_product(const std::vector<float> &a, const std
     id<MTLFunction> dotProductFn = [lib newFunctionWithName:@"dotProduct"];
     id<MTLComputePipelineState> pipeline = [device newComputePipelineStateWithFunction:dotProductFn error:&error];
 
+    // std::cout << "Max total threads per threadgroup: " << pipeline.maxTotalThreadsPerThreadgroup << std::endl;
+    // std::cout << "thread execution width: " << pipeline.threadExecutionWidth << std::endl;
+
     if (!pipeline) {
         std::cerr << "Pipeline creation error: " << [[error localizedDescription] UTF8String];
 

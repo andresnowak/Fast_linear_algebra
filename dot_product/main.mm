@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <numeric>
 #include <iomanip>
+#include <cassert>
 
 #include "dot_product.h"
 
@@ -28,34 +29,26 @@ std::vector<T> random_vector(size_t n, float low = -10, float high = 10) {
     return v;
 }
 
-int main() {
-    const size_t N = 1048576;
-    const int warmup = 5;
-    const int measured_iterations = 100;
+void benchmark(const std::vector<float> &A, const std::vector<float> &B, const int warmup, const int measured_iterations, std::pair<float, double> (*dot_product)(const std::vector<float> &a, const std::vector<float> &b)) {
     const int total_runs = warmup + measured_iterations;
 
-    std::vector<float> A = random_vector<float>(N);
-    std::vector<float> B = random_vector<float>(N);
-
-    std::vector<double> kernel_runtimes;
+     std::vector<double> kernel_runtimes;
     kernel_runtimes.reserve(measured_iterations); 
     
     std::vector<double> wall_clock_times;
     wall_clock_times.reserve(measured_iterations);
 
     for (int run = 0; run < total_runs; ++run) {
-        @autoreleasepool { // Clean objective-c objects
-            // Wall clock time
-            auto start = std::chrono::high_resolution_clock::now();
-            
-            auto [result, time] = dot_product_mul(A, B);
+        // Wall clock time
+        auto start = std::chrono::high_resolution_clock::now();
+        
+        auto [result, time] = dot_product(A, B);
 
-            auto end = std::chrono::high_resolution_clock::now();
+        auto end = std::chrono::high_resolution_clock::now();
 
-            if (run >= warmup) {
-                wall_clock_times.push_back(std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count());
-                kernel_runtimes.push_back(time); // Time of cpu reduce + gpu kernel runtime
-            }
+        if (run >= warmup) {
+            wall_clock_times.push_back(std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count());
+            kernel_runtimes.push_back(time); // Time of cpu reduce + gpu kernel runtime
         }
     }
 
@@ -79,8 +72,7 @@ int main() {
     double mean_kernel_runtimes = std::accumulate(kernel_runtimes.begin(), kernel_runtimes.end(), 0.0) / kernel_runtimes.size();
     double mean_wall_clock_times = std::accumulate(wall_clock_times.begin(), wall_clock_times.end(), 0.0) / wall_clock_times.size();
 
-
-    const std::uint64_t flops = 2 * N;          // multiply-add
+    const std::uint64_t flops = 2 * A.size();          // multiply-add
     double medianGflops = flops / median_kernel_runtimes;   // 1 ns = 1e-9 s
     double meanGflops   = flops / mean_kernel_runtimes;
 
@@ -92,6 +84,32 @@ int main() {
 
     std::cout << "Median wall clock time: " << median_wall_clock_times / 1e6 << "ms\n";
     std::cout << "Mean wall clock time: " << mean_wall_clock_times / 1e6 << "ms\n";
+}
 
-    return 0;
+void test(const std::vector<float> &A, const std::vector<float> &B, std::pair<float, double> (*dot_product)(const std::vector<float> &a, const std::vector<float> &b)) {
+    float cpu_result = 0;
+    #pragma omp parallel for reduction(+:cpu_result)
+    for (size_t i = 0; i < A.size(); i++) {
+        cpu_result += A[i] * B[i];
+    }
+    auto [result, time] = dot_product(A, B);
+
+    assert(cpu_result == result);
+}
+
+int main() {
+    const size_t N = 1048576;
+    const int warmup = 5;
+    const int measured_iterations = 100;
+
+    std::vector<float> A = random_vector<float>(N);
+    std::vector<float> B = random_vector<float>(N);
+
+    @autoreleasepool { // Clean objective-c objects
+        test(A, B, dot_product_mul);
+        benchmark(A, B, warmup, measured_iterations, dot_product_mul);
+
+        test(A, B, dot_product_mul_reduce);
+        benchmark(A, B, warmup, measured_iterations, dot_product_mul_reduce);
+    }
 }

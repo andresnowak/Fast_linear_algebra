@@ -56,7 +56,63 @@ And for this simple kernel we only do the multiplication and the reduction we wi
   };
 ```
 
+**Cost: 3N Global loads (because we do load in gpu for a and b, and then in cpu load for outs), N muls, and N sums**
+
 Here we are basically dividing our for loop into chucks for each thread in the CPU, saying that each cpu gets its own private copy of the dot variable, and then we add all results together atomically in the global dot variable
 
 ## Dot product mul reduce GPU
 
+Here will be our first version where we start to do some work of the reduce on the GPU
+
+```c++
+kernel void dotProduct(const device float* a [[ buffer (0) ]],
+                        const device float* b [[ buffer (1) ]],
+                        device float* out [[buffer (2)]],
+                        uint3 tid [[ thread_position_in_grid ]],
+                        uint3 tpt [[ threads_per_threadgroup ]],
+                        uint3 lid [[ thread_position_in_threadgroup ]]
+                        ) {
+
+    threadgroup float shared[256]; // threadgroup is the storage qualifier saying this memory lives in sram (cache, flip-flop), that is shared by all threads (I think we should use variable tip here, but we need to use constants, and it seems tpt is not constant)
+
+    float prod = a[tid.x] * b[tid.x];
+
+    shared[lid.x] = prod;
+
+    threadgroup_barrier(mem_flags::mem_threadgroup); // Wait for all threads in threadgroup to finish
+
+    if (lid.x == 0) { // First thread does the reduction
+        float sum = 0.0;
+
+        for (uint i = 0; i < tpt.x; ++i) {
+            sum += shared[i];
+        }
+
+        out[tid.x / tpt.x] = sum;
+    }
+    
+}
+```
+
+- Here now we are creating first a vector memory in SRAM (the cache) for our threadgroup, here all the threads in a threadgroup will put their multiplication value.
+- Then we make the threadgroup wait for all threads to finish, 
+- And then we do an accumulation with the thread with id 0 of that threadgroup and we write to basically the threadgroup number, basically we want the values to be contiguous in this out vector so the cpu can more easily do the last reduction, because here the only thing we are doing is reducing a little bit of the work for the cpu
+
+```c++
+  auto reduce = [](size_t n, float* results) -> float {
+    float dot = 0;
+  
+    #pragma omp parallel for reduction(+:dot)
+    for (size_t i = 0; i < ceil(n / 256.0); ++i) {
+        dot += results[i];
+    }
+
+    return dot;
+  };
+```
+
+But we can see this example is slower than our first version and it makes sense because first we are doing a threadgroup barrier waiting to then do just part of the work for then the cpu to finish.
+
+Compared to the other version that just does the multiplication on the GPU and then does parallel reduction on the CPU, here we have basically now more loads (even though they are from SRAM) compared to the older version
+
+**Cost: $N Global loads (because we do load in gpu for a and b and then again from our shared memory, and then in cpu load for outs), N muls, and N sums**
