@@ -24,7 +24,7 @@ for (int i = 0; i < n; i++) {
 }
 ```
 
-We are instead doing parallel group between what we call grids
+We are instead iterating our vector (or better said our defined grid) with threads (so defining parallel work from the get go)
 
 ```objective-c
 MTLSize gridSize = MTLSizeMake(n, 1, 1); // (x, y, z)
@@ -33,18 +33,15 @@ MTLSize threadgroupSz = MTLSizeMake(256, 1, 1); // (x, y, z)
 ```
 
 - What we are doing here is that first we are going to create a 3D grid as a 1 dimensional line of n values (lets say 4096 values) ```MTLSize gridSize = MTLSizeMake(n, 1, 1);``` (because this is our total amount of values in our vectors)
-- Then we will divide this grid into our threadGroups (this can't be bigger than the amount of threads we have, in this case we have 2048 (or 1024 not completely sure) threads in the M1 pro)
+- Then we will divide this grid into our threadGroups (this can't be bigger than the amount of threads we have 1024 threads available to use use in one core (because 4SIMDs x 32 threads each x waves (warps) per SIMD) threads in the M1 pro)
   - This thread groups will have a shared memory
-    - Based on this the best thread groups sizes here are around 256 because 
 - Dot-product is a very compute bound problem (as there is very little operations we can do)
-  - Using (256 threads = 8 warps (of 32 threads each) = 2 warps per SIMD * 4 SIMDs)
-  - using 4 warps wouldn't help
+  - Using (256 threads = 8 warps (of 32 threads each) = 2 warps per SIMD group * 4 SIMDs) This would only happen if the whole GPU was idle and we can only use one core for this 256 threads
+    - using 4 warps wouldn't help (so having one SIMD group (32 threads) do 4 warps)
+- The reason we use 256 threads for the threadgroup is because this what gave the fastest speed (a lot of this logic is managed by the device driver by how it selects the warps to use)
 
 
-
-
-
-For this simple one for now we will be doing the reduction on the CPU
+And for this simple kernel we only do the multiplication and the reduction we will do it on the CPU side, by copying our out result vector to CPU and then doing the reduction in parallel with omp
 
 ```c++
   auto reduce = [](size_t n, float* results) -> float {
@@ -58,3 +55,8 @@ For this simple one for now we will be doing the reduction on the CPU
       return dot;
   };
 ```
+
+Here we are basically dividing our for loop into chucks for each thread in the CPU, saying that each cpu gets its own private copy of the dot variable, and then we add all results together atomically in the global dot variable
+
+## Dot product mul reduce GPU
+

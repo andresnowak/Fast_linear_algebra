@@ -30,8 +30,8 @@ std::vector<T> random_vector(size_t n, float low = -10, float high = 10) {
 
 int main() {
     const size_t N = 1048576;
-    const int warmup = 3;
-    const int measured_iterations = 20;
+    const int warmup = 5;
+    const int measured_iterations = 100;
     const int total_runs = warmup + measured_iterations;
 
     std::vector<float> A = random_vector<float>(N);
@@ -44,16 +44,18 @@ int main() {
     wall_clock_times.reserve(measured_iterations);
 
     for (int run = 0; run < total_runs; ++run) {
-        // Wall clock time
-        auto start = std::chrono::high_resolution_clock::now();
-    
-        auto [result, time] = dot_product_mul(A, B);
+        @autoreleasepool { // Clean objective-c objects
+            // Wall clock time
+            auto start = std::chrono::high_resolution_clock::now();
+            
+            auto [result, time] = dot_product_mul(A, B);
 
-        auto end = std::chrono::high_resolution_clock::now();
+            auto end = std::chrono::high_resolution_clock::now();
 
-        if (run >= warmup) {
-            wall_clock_times.push_back(std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count());
-            kernel_runtimes.push_back(time); // Time of cpu reduce + gpu kernel runtime
+            if (run >= warmup) {
+                wall_clock_times.push_back(std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count());
+                kernel_runtimes.push_back(time); // Time of cpu reduce + gpu kernel runtime
+            }
         }
     }
 
