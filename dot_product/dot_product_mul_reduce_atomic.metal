@@ -3,7 +3,7 @@ using namespace metal;
 
 kernel void dotProduct(const device float* a [[ buffer (0) ]],
                         const device float* b [[ buffer (1) ]],
-                        device float* out [[buffer (2)]],
+                        device atomic_float* out [[buffer (2)]],
                         uint3 tid [[ thread_position_in_grid ]],
                         uint3 tpt [[ threads_per_threadgroup ]],
                         uint3 lid [[ thread_position_in_threadgroup ]]
@@ -24,7 +24,6 @@ kernel void dotProduct(const device float* a [[ buffer (0) ]],
             sum += shared[i];
         }
 
-        out[tid.x / tpt.x] = sum;
+        atomic_fetch_add_explicit(&out[0], sum, memory_order_relaxed);
     }
-    
 }

@@ -6,8 +6,21 @@
 #include <numeric>
 #include <iomanip>
 #include <cassert>
+#include <cmath>
+#include <limits>
 
 #include "dot_product.h"
+
+constexpr float EPS = std::numeric_limits<float>::epsilon();
+
+bool almost_equal(float a, float b,
+                  float rel_tol = 10.0f * EPS,
+                  float abs_tol = 10.0f * EPS)
+{
+    float diff = std::fabs(a - b);
+    float norm  = std::fmax(std::fabs(a), std::fabs(b));
+    return diff <= std::fmax(rel_tol * norm, abs_tol);
+}
 
 void print_vector(const std::vector<float> &a) {
     for (const auto& x : a) {
@@ -52,7 +65,7 @@ void benchmark(const std::vector<float> &A, const std::vector<float> &B, const i
         }
     }
 
-    auto [result, time] = dot_product_mul(A, B);
+    auto [result, time] = dot_product(A, B);
     std::cout << "Dot product result: " << result << std::endl;
 
     // Get statistics
@@ -94,11 +107,13 @@ void test(const std::vector<float> &A, const std::vector<float> &B, std::pair<fl
     }
     auto [result, time] = dot_product(A, B);
 
-    assert(cpu_result == result);
+    std::cout << cpu_result << " " << result << std::endl;
+
+    assert(almost_equal(cpu_result, result));
 }
 
 int main() {
-    const size_t N = 1048576;
+    const size_t N = 1024;
     const int warmup = 5;
     const int measured_iterations = 100;
 
@@ -106,10 +121,20 @@ int main() {
     std::vector<float> B = random_vector<float>(N);
 
     @autoreleasepool { // Clean objective-c objects
+        std::cout << "Dot product mul, cpu reduce\n" << std::endl;
         test(A, B, dot_product_mul);
         benchmark(A, B, warmup, measured_iterations, dot_product_mul);
 
+        std::cout << "\nDot product mul reduce, cpu reduce\n" << std::endl;
         test(A, B, dot_product_mul_reduce);
         benchmark(A, B, warmup, measured_iterations, dot_product_mul_reduce);
+
+        std::cout << "\nDot product mul reduce atomic\n" << std::endl;
+        test(A, B, dot_product_mul_reduce_atomic);
+        benchmark(A, B, warmup, measured_iterations, dot_product_mul_reduce_atomic);
+
+        std::cout << "\nDot product mul tree reduce\n" << std::endl;
+        test(A, B, dot_product_mul_tree_reduce);
+        benchmark(A, B, warmup, measured_iterations, dot_product_mul_tree_reduce);
     }
 }

@@ -1,6 +1,9 @@
 # Dot product
 
-CPU and GPU memory in M processors is unified
+- CPU and GPU memory in M processors is unified
+- Also in this examples we are not doing dot-products that optimize for different sizes and we are also not doing a check for if the size of the vector is less than the amount of threads we have (because we would be accessing out of bounds but in metal i think the scheduler already does this check with how many threads it can launch based on grid size, the scheduler already mask the unused SIMD lanes)
+- Finally **All the algorithms here will run with an input of size 1024**, we do this because of how the reduction algorithms work
+  - We want to use a threadgroup of size 1024 to be able to then do the tree reduce type algorithms on this with the gpu (so input = 2 * threadgroup), but because we also need to do first vector multiplication (*so here we would need two threadgroups instead of 1, or the same thread multiplying its value and the next one*) and we can't synchronize across threadgroups we instead use inputs of 1024. We do this so we can do the whole reduction with one block to the scalar, if we don't have this it is necessary to do reduction on cpu, do atomic add across blocks on the GPU, or launch the kernel multiple times to reduce the size of vector until we get just a scalar.
 
 ## Dot product mul GPU and reduce on CPU
 
@@ -28,7 +31,7 @@ We are instead iterating our vector (or better said our defined grid) with threa
 
 ```objective-c
 MTLSize gridSize = MTLSizeMake(n, 1, 1); // (x, y, z)
-MTLSize threadgroupSz = MTLSizeMake(256, 1, 1); // (x, y, z)
+MTLSize threadgroupSz = MTLSizeMake(1024, 1, 1); // (x, y, z)
 [enc dispatchThreads:gridSize threadsPerThreadgroup:threadgroupSz]
 ```
 
@@ -36,9 +39,6 @@ MTLSize threadgroupSz = MTLSizeMake(256, 1, 1); // (x, y, z)
 - Then we will divide this grid into our threadGroups (this can't be bigger than the amount of threads we have 1024 threads available to use use in one core (because 4SIMDs x 32 threads each x waves (warps) per SIMD) threads in the M1 pro)
   - This thread groups will have a shared memory
 - Dot-product is a very compute bound problem (as there is very little operations we can do)
-  - Using (256 threads = 8 warps (of 32 threads each) = 2 warps per SIMD group * 4 SIMDs) This would only happen if the whole GPU was idle and we can only use one core for this 256 threads
-    - using 4 warps wouldn't help (so having one SIMD group (32 threads) do 4 warps)
-- The reason we use 256 threads for the threadgroup is because this what gave the fastest speed (a lot of this logic is managed by the device driver by how it selects the warps to use)
 
 
 And for this simple kernel we only do the multiplication and the reduction we will do it on the CPU side, by copying our out result vector to CPU and then doing the reduction in parallel with omp
@@ -60,7 +60,7 @@ And for this simple kernel we only do the multiplication and the reduction we wi
 
 Here we are basically dividing our for loop into chucks for each thread in the CPU, saying that each cpu gets its own private copy of the dot variable, and then we add all results together atomically in the global dot variable
 
-## Dot product mul reduce GPU
+## Dot product mul reduce GPU and final reduce CPU
 
 Here will be our first version where we start to do some work of the reduce on the GPU
 
@@ -73,7 +73,7 @@ kernel void dotProduct(const device float* a [[ buffer (0) ]],
                         uint3 lid [[ thread_position_in_threadgroup ]]
                         ) {
 
-    threadgroup float shared[256]; // threadgroup is the storage qualifier saying this memory lives in sram (cache, flip-flop), that is shared by all threads (I think we should use variable tip here, but we need to use constants, and it seems tpt is not constant)
+    threadgroup float shared[1024]; // threadgroup is the storage qualifier saying this memory lives in sram (cache, flip-flop), that is shared by all threads (I think we should use variable tip here, but we need to use constants, and it seems tpt is not constant)
 
     float prod = a[tid.x] * b[tid.x];
 
@@ -103,7 +103,7 @@ kernel void dotProduct(const device float* a [[ buffer (0) ]],
     float dot = 0;
   
     #pragma omp parallel for reduction(+:dot)
-    for (size_t i = 0; i < ceil(n / 256.0); ++i) {
+    for (size_t i = 0; i < ceil(n / 1024.0); ++i) {
         dot += results[i];
     }
 
@@ -116,3 +116,102 @@ But we can see this example is slower than our first version and it makes sense 
 Compared to the other version that just does the multiplication on the GPU and then does parallel reduction on the CPU, here we have basically now more loads (even though they are from SRAM) compared to the older version
 
 **Cost: $N Global loads (because we do load in gpu for a and b and then again from our shared memory, and then in cpu load for outs), N muls, and N sums**
+
+
+## Dot product mul reduce GPU
+
+For this one we will now do the whole reduction on the GPU kernel by doing an atomic add
+
+
+```c++
+kernel void dotProduct(const device float* a [[ buffer (0) ]],
+                        const device float* b [[ buffer (1) ]],
+                        device atomic_float* out [[buffer (2)]],
+                        uint3 tid [[ thread_position_in_grid ]],
+                        uint3 tpt [[ threads_per_threadgroup ]],
+                        uint3 lid [[ thread_position_in_threadgroup ]]
+                        ) {
+
+    threadgroup float shared[1024]; // threadgroup is the storage qualifier saying this memory lives in sram (cache, flip-flop), that is shared by all threads (I think we should use variable tip here, but we need to use constants, and it seems tpt is not constant)
+
+    float prod = a[tid.x] * b[tid.x];
+
+    shared[lid.x] = prod;
+
+    threadgroup_barrier(mem_flags::mem_threadgroup); // Wait for all threads in threadgroup to finish
+
+    if (lid.x == 0) { // First thread does the reduction
+        float sum = 0.0;
+
+        for (uint i = 0; i < tpt.x; ++i) {
+            sum += shared[i];
+        }
+
+        atomic_fetch_add_explicit(&out[0], sum, memory_order_relaxed);
+    }
+}
+```
+
+*Also see here that we are using atomic_float, but we are casting our output float vector (pointer) to an atomic float, this is possible because our memory is already correctly aligned for the float and we only modify for this case the values with atomic operations, the only other operation we do is a copy to cpu and thats it*
+
+## Dot product mul tree reduce GPU
+
+Now lets implement tree reduce algorithm, here for the first version as how the algorithm is defined, we have that each thread will reduce two values, the value at its position and the one next to it.
+
+So here the thread positions will be defined by `uint position = thread_position_in_grid * 2`
+
+```c++
+kernel void dotProduct2(const device float* a [[ buffer (0) ]],
+                        const device float* b [[ buffer (1) ]],
+                        device float* out [[buffer (2)]],
+                        uint3 tid [[ thread_position_in_grid ]],
+                        uint3 tpt [[ threads_per_threadgroup ]]
+                        ) {
+    out[tid.x] = a[tid.x] * b[tid.x];
+
+    threadgroup_barrier(mem_flags::mem_device); // Wait for all threads in threadgroup to finish and memory is ordered, so basically saying which values is the one we will be able to use (so we linearize the operations thats what it means), because if not it is possible to have the regular register problem where a first read can read the new value and next read by another thread can read an old value (we need for each thread to see the same order in memory)
+
+    uint position = tid.x * 2;
+
+    for (uint stride = 1; stride <= tpt.x; stride *= 2) {
+        if (tid.x % stride == 0) {
+            out[position] += out[position + stride];
+        }
+
+        threadgroup_barrier(mem_flags::mem_device);
+    }
+}
+```
+
+Here we do the work but directly on the memory device (so we work in DRAM and then L2 and L1 cache *and i think the coherency would be directly in cache, and we don't need to go to DRAM, because the the threadgroup will probably share the same cache*).
+
+But instead of doing it this way we can use the threadgroup shared memory (that is of type SRAM) that is even faster than the L1 cache (and smaller, I think 32 kb here), this way we can work faster and can have better synchronization
+
+```c++
+kernel void dotProduct(const device float* a [[ buffer (0) ]],
+                        const device float* b [[ buffer (1) ]],
+                        device float* out [[buffer (2)]],
+                        uint3 tid [[ thread_position_in_grid ]],
+                        uint3 tpt [[ threads_per_threadgroup ]]
+                        ) {
+
+    threadgroup float shared[1024];
+    shared[tid.x] = a[tid.x] * b[tid.x];
+
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    uint position = tid.x * 2;
+
+    for (uint stride = 1; stride <= tpt.x; stride *= 2) {
+        if (tid.x % stride == 0) {
+            shared[position] += shared[position + stride];
+        }
+
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+
+    if (tid.x == 0) {
+        out[0] = shared[tid.x];
+    }
+}
+```

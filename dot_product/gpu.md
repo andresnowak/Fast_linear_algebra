@@ -47,4 +47,6 @@ Programming massively parallel processors
 - Each SIMD (The group of 4 x 32 threads = 128 scalar Alus) has 256 vector registers
   - This way by having more vector registers than threads we can keep many live values without spilling into memory
 - A core owns one on-chip scratchpad called “threadgroup memory” (remember we have 256 registers for each SIMD)
+- Using (256 threads = 8 warps (of 32 threads each) = 2 warps per SIMD group * 4 SIMDs) This would only happen if the whole GPU was idle and we can only use one core for this 256 threads
+    - using 4 warps wouldn't help (so having one SIMD group (32 threads) do 4 warps)
 
