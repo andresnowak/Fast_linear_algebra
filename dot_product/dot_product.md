@@ -253,3 +253,38 @@ kernel void dotProduct(const device float* a [[ buffer (0) ]],
     }
 }
 ```
+
+## Dot product mul tree reduce hierarchical reduction GPU
+
+Now if you saw the other versions of tree reduce the problem with them is that they assume that the input will be double the size of the largest threadgroup we can use (so in this case 2048, and because we are doing the dot product we use 1024 because we need each thread to do the multiplication, but even though we could have done it so the thread does two outputs of the multiplications)
+
+To fix this we do now something called hierarchical reduction, where first each threadgroup does a reduction on its own shared memory and then the results of this reduced vector will be added to the first position of the output vector with an atomic add so as to have linearity in the operations between threadgroups for the final reduction into a scalar (it is not possible to do synchronization between threadgroups)
+
+```c++
+kernel void dotProduct(const device float* a [[ buffer (0) ]],
+                        const device float* b [[ buffer (1) ]],
+                        device atomic_float* out [[buffer (2)]],
+                        uint3 tid [[ thread_position_in_grid ]],
+                        uint3 tpt [[ threads_per_threadgroup ]],
+                        uint3 lid [[ thread_position_in_threadgroup ]]
+                        ) {
+
+    threadgroup float shared[1024];
+    shared[lid.x] = a[tid.x] * b[tid.x];
+
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    for (uint stride = tpt.x / 2; stride >= 1; stride /= 2) {
+        if (lid.x < stride) {
+            shared[lid.x] += shared[lid.x + stride];
+        }
+
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+
+    
+    if (lid.x == 0) {
+        atomic_fetch_add_explicit(&out[0], shared[lid.x], memory_order_relaxed);
+    }
+}
+```
