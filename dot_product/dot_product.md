@@ -293,9 +293,9 @@ kernel void dotProduct(const device float* a [[ buffer (0) ]],
 
 ### Thread coarsening
 
-Now there is a last trick for reductions, the last idea is why do we have to reduce only two values per thread, why not three or four or whatever
+Now there is a last trick for reductions, the last idea is why do we have to reduce only two values per thread, why not three or four or whatever this is called Coarsened reduction
 
-That is the idea here where we first do a reduction for a single thread for all the values it will work on and then we reduce per block and finally we reduce across blocks
+The idea here where we first do a reduction for a single thread for all the values it will work on and then we reduce per block and finally we reduce across blocks
 
 - This method can be faster because now each thread can do a little bit more floating operations, so we are doing more computations and we are also reducing the size of our final vector where we will have in the end reduce across the blocks their results in global memory (so less atomicAdds)
 
