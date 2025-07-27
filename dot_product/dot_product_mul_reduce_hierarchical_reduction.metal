@@ -14,7 +14,7 @@ kernel void dotProduct(const device float* a [[ buffer (0) ]],
 
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
-    for (uint stride = tpt.x / 2; stride >= 1; stride /= 2) {
+    for (uint stride = tpt.x / 2; stride >= 1; stride >>= 1) {
         if (lid.x < stride) {
             shared[lid.x] += shared[lid.x + stride];
         }
