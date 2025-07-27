@@ -308,7 +308,7 @@ But an implementation in metal would look like this for the thread coarsening re
 
 kernel void reduce(const device float* a [[ buffer (0) ]],
                         device atomic_float* out [[buffer (1)]],
-                        const int& size [[ bufer[2] ]], // size of input
+                        const int& size [[ buffer(2) ]], // size of input
                         uint3 tid [[ thread_position_in_grid ]],
                         uint3 tpt [[ threads_per_threadgroup ]],
                         uint3 lid [[ thread_position_in_threadgroup ]],
