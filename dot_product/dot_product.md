@@ -344,3 +344,5 @@ kernel void reduce(const device float* a [[ buffer (0) ]],
     }
 }
 ```
+
+with a coarse factor of 2 we are doing basically the same as we where doing before in reality (or well in this case not because we only used 1024 values (size of threadgroup) instead of 2048 at first by grabbing directly from the input because we need to first do the dot product)
