@@ -1,5 +1,7 @@
 # GEMM
 
+Learned from this [blog](https://salykova.github.io/matmul-cpu)
+
 ## GEMM Naive
 
 The naive GEMM implementation follows the mathematical definition of matrix multiplication using three nested loops. Here's how it works:
