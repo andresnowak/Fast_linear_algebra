@@ -288,3 +288,59 @@ kernel void dotProduct(const device float* a [[ buffer (0) ]],
     }
 }
 ```
+
+## Extra
+
+### Thread coarsening
+
+Now there is a last trick for reductions, the last idea is why do we have to reduce only two values per thread, why not three or four or whatever
+
+That is the idea here where we first do a reduction for a single thread for all the values it will work on and then we reduce per block and finally we reduce across blocks
+
+- This method can be faster because now each thread can do a little bit more floating operations, so we are doing more computations and we are also reducing the size of our final vector where we will have in the end reduce across the blocks their results in global memory (so less atomicAdds)
+
+The thing is here in the dot_product we don't implement it, because the thing is that here we first depend on the result of the multiplication of the two vectors and there is no way to do synchronization across threadgroups, and this technique helps when doing the first reduction form the input vector (in this case the output one where are writing the vector mul result), and form this we reduce the final size of our vector (because each block did more work in the end) and we have now less atomic adds across blocks.
+
+But an implementation in metal would look like this for the thread coarsening reduce
+
+```c++
+#define COARSE_FACTOR 2
+
+kernel void reduce(const device float* a [[ buffer (0) ]],
+                        device atomic_float* out [[buffer (2)]],
+                        uint3 tid [[ thread_position_in_grid ]],
+                        uint3 tpt [[ threads_per_threadgroup ]],
+                        uint3 lid [[ thread_position_in_threadgroup ]],
+                        uint3 size [[ threads_per_grid ]])
+                        ) {
+    
+    threadgroup float shared[1024];
+
+    float sum = 0.0;
+
+    #pragma unroll
+    for (uint tile = 1; tile <= COARSE_FACTOR; ++tile) {
+      int index = tid.x + tpt.x * tile;
+      if (index < size.x) {
+        sum += a[index];
+      }
+    }
+
+    shared[lid.x] = sum;
+
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    for (uint stride = tpt.x / 2; stride >= 1; stride >>= 1) {
+        if (lid.x < stride) {
+            shared[lid.x] += shared[lid.x + stride];
+        }
+
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+
+    
+    if (lid.x == 0) {
+        atomic_fetch_add_explicit(&out[0], shared[lid.x], memory_order_relaxed);
+    }
+}
+```
