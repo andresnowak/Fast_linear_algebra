@@ -111,8 +111,8 @@ void test(const std::vector<float> &A, const std::vector<float> &B, std::pair<fl
 }
 
 int main() {
-    const size_t N = 1024;
-    const int warmup = 5;
+    size_t N = 1024;
+    const int warmup = 10;
     const int measured_iterations = 100;
 
     std::vector<float> A = random_vector<float>(N);
@@ -138,5 +138,14 @@ int main() {
         std::cout << "\nDot product mul tree reduce fix divergence\n" << std::endl;
         test(A, B, dot_product_mul_tree_reduce_fix_divergence);
         benchmark(A, B, warmup, measured_iterations, dot_product_mul_tree_reduce_fix_divergence);
+
+        N = 4096;
+
+        std::vector<float> An = random_vector<float>(N);
+        std::vector<float> Bn = random_vector<float>(N);
+
+        std::cout << "\nDot product mul reduce with hierarchical reduction \n" << std::endl;
+        test(An, Bn, dot_product_mul_reduce_hierarchical_reduction);
+        benchmark(A, B, warmup, measured_iterations, dot_product_mul_reduce_hierarchical_reduction);
     }
 }
