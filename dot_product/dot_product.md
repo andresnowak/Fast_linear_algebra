@@ -307,21 +307,23 @@ But an implementation in metal would look like this for the thread coarsening re
 #define COARSE_FACTOR 2
 
 kernel void reduce(const device float* a [[ buffer (0) ]],
-                        device atomic_float* out [[buffer (2)]],
+                        device atomic_float* out [[buffer (1)]],
+                        const int& size [[ bufer[2] ]], // size of input
                         uint3 tid [[ thread_position_in_grid ]],
                         uint3 tpt [[ threads_per_threadgroup ]],
                         uint3 lid [[ thread_position_in_threadgroup ]],
-                        uint3 size [[ threads_per_grid ]])
+                        uint3 tgpos [[ threadgroup_position_in_grid ]]
                         ) {
-    
     threadgroup float shared[1024];
 
     float sum = 0.0;
 
+    int real_grid_pos = tgpos.x * tpt.x * COARSE_FACTOR + lid.x;
+
     #pragma unroll
     for (uint tile = 0; tile < COARSE_FACTOR; ++tile) {
-      int index = tid.x + tpt.x * tile;
-      if (index < size.x) {
+      int index = real_grid_pos + tpt.x * tile;
+      if (index < size) {
         sum += a[index];
       }
     }
