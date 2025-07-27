@@ -9,3 +9,5 @@ std::pair<float, double> dot_product_mul_reduce(const std::vector<float> &A, con
 std::pair<float, double> dot_product_mul_reduce_atomic(const std::vector<float> &A, const std::vector<float> &B);
 
 std::pair<float, double> dot_product_mul_tree_reduce(const std::vector<float> &A, const std::vector<float> &B);
+
+std::pair<float, double> dot_product_mul_tree_reduce_fix_divergence(const std::vector<float> &A, const std::vector<float> &B);

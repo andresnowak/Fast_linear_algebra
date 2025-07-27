@@ -4,6 +4,7 @@
 - Also in this examples we are not doing dot-products that optimize for different sizes and we are also not doing a check for if the size of the vector is less than the amount of threads we have (because we would be accessing out of bounds but in metal i think the scheduler already does this check with how many threads it can launch based on grid size, the scheduler already mask the unused SIMD lanes)
 - Finally **All the algorithms here will run with an input of size 1024**, we do this because of how the reduction algorithms work
   - We want to use a threadgroup of size 1024 to be able to then do the tree reduce type algorithms on this with the gpu (so input = 2 * threadgroup), but because we also need to do first vector multiplication (*so here we would need two threadgroups instead of 1, or the same thread multiplying its value and the next one*) and we can't synchronize across threadgroups we instead use inputs of 1024. We do this so we can do the whole reduction with one block to the scalar, if we don't have this it is necessary to do reduction on cpu, do atomic add across blocks on the GPU, or launch the kernel multiple times to reduce the size of vector until we get just a scalar.
+- *For the threadgroup sizes, I'm still confused as we can use 1024 threads okay, but all this threads can't run in a block in parallel no? as one core can only do 128 threads (and maybe can do multiple warps in one cycle)*
 
 ## Dot product mul GPU and reduce on CPU
 
@@ -204,6 +205,43 @@ kernel void dotProduct(const device float* a [[ buffer (0) ]],
 
     for (uint stride = 1; stride <= tpt.x; stride *= 2) {
         if (tid.x % stride == 0) {
+            shared[position] += shared[position + stride];
+        }
+
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+
+    if (tid.x == 0) {
+        out[0] = shared[tid.x];
+    }
+}
+```
+
+## Dot product mul tree reduce fix control divergence GPU
+
+Now for this method instead of a thread reducing two contiguous values (its position and the one next to it), instead we will have each thread add the value at its position and one that is a block away (a threadgroup away) from it. 
+
+- This way we do two things
+  - We have made better coalesced memory access, because now threads are accessing values next to each other so they are using the values of the cache lane.
+  - And we have removed control divergence, because here a warp is either executing a block or not (only if the input is not exactly divisible by the block size then we would have one warp at least with divergence at each point)
+
+```c++
+kernel void dotProduct(const device float* a [[ buffer (0) ]],
+                        const device float* b [[ buffer (1) ]],
+                        device float* out [[buffer (2)]],
+                        uint3 tid [[ thread_position_in_grid ]],
+                        uint3 tpt [[ threads_per_threadgroup ]]
+                        ) {
+
+    threadgroup float shared[1024];
+    shared[tid.x] = a[tid.x] * b[tid.x];
+
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    uint position = tid.x;
+
+    for (uint stride = tpt.x; stride >= 1; stride /= 2) {
+        if (tid.x < stride) {
             shared[position] += shared[position + stride];
         }
 

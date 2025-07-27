@@ -5,8 +5,8 @@ CXX_LDFLAGS := -framework Foundation -framework Metal
 
 # Files
 TEST_SRC := test.mm
-METAL_SRC := dot_product_mul.metal dot_product_mul_reduce.metal dot_product_mul_reduce_atomic.metal dot_product_mul_tree_reduce.metal
-METAL_LIBS := dot_product_mul.metallib dot_product_mul_reduce.metallib dot_product_mul_reduce_atomic.metallib dot_product_mul_tree_reduce.metallib
+METAL_SRC := dot_product_mul.metal dot_product_mul_reduce.metal dot_product_mul_reduce_atomic.metal dot_product_mul_tree_reduce.metal dot_product_mul_tree_reduce_fix_divergence.metal 
+METAL_LIBS := dot_product_mul.metallib dot_product_mul_reduce.metallib dot_product_mul_reduce_atomic.metallib dot_product_mul_tree_reduce.metallib dot_product_mul_tree_reduce_fix_divergence.metallib
 OBJECTIVE_CPP_SRC := main.mm dot_product.mm
 TARGET := dot_product
 

@@ -107,8 +107,6 @@ void test(const std::vector<float> &A, const std::vector<float> &B, std::pair<fl
     }
     auto [result, time] = dot_product(A, B);
 
-    std::cout << cpu_result << " " << result << std::endl;
-
     assert(almost_equal(cpu_result, result));
 }
 
@@ -136,5 +134,9 @@ int main() {
         std::cout << "\nDot product mul tree reduce\n" << std::endl;
         test(A, B, dot_product_mul_tree_reduce);
         benchmark(A, B, warmup, measured_iterations, dot_product_mul_tree_reduce);
+
+        std::cout << "\nDot product mul tree reduce fix divergence\n" << std::endl;
+        test(A, B, dot_product_mul_tree_reduce_fix_divergence);
+        benchmark(A, B, warmup, measured_iterations, dot_product_mul_tree_reduce_fix_divergence);
     }
 }
