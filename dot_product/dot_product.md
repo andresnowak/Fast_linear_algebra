@@ -319,7 +319,7 @@ kernel void reduce(const device float* a [[ buffer (0) ]],
     float sum = 0.0;
 
     #pragma unroll
-    for (uint tile = 1; tile <= COARSE_FACTOR; ++tile) {
+    for (uint tile = 0; tile < COARSE_FACTOR; ++tile) {
       int index = tid.x + tpt.x * tile;
       if (index < size.x) {
         sum += a[index];
