@@ -42,7 +42,7 @@ Programming massively parallel processors
 - A core can have 768 threads? (hardware sweet spot occupancy)
 - We have around ~5 TFLOPs (16cores * 128alus * 1.3GHZ * 2 (as FMA counts as 2 FLOPs)
 - Max threadgroup size is <= 1024 threads
-  - This max threadgroup size is referring to inside one GPU core, remember we have 128 ALUs that are divided in 4 SIMDs and each one of this can hold multiple warps (or waves), so we can have $4\text{SIMDs} \times 32\text{threads} \times \text{waves_per_SIMD} = 1024$
+  - This max threadgroup size is referring to inside one GPU core, remember we have 128 ALUs that are divided in 4 SIMDs and each one of this can hold multiple warps (or waves), so we can have $4\text{SIMDs} \times 32\text{threads} \times \text{waves\_per\_SIMD} = 1024$
 - It seems each SIMD group runs 32 threads in lock-step
 - Register file size is ~208 KB
 - Each SIMD (The group of 4 x 32 threads = 128 scalar Alus) has 256 vector registers
