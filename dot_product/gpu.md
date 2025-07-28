@@ -22,6 +22,7 @@ Programming massively parallel processors
       1. if our threadgroup surpasses this then the registers could spill into global memory
 7. FP32 pipes can run two FP16 operations by doing "emulation" or also called "packed math"
 8. When doing Threadgroups does threadgroups are distributed across all the available warps
+9. The L1 cache is also used for the shared memory
 
 ### M1 pro
 [Apple gpu microarchitecture information](https://github.com/philipturner/metal-benchmarks)
@@ -50,3 +51,5 @@ Programming massively parallel processors
 - Using (256 threads = 8 warps (of 32 threads each) = 2 warps per SIMD group * 4 SIMDs) This would only happen if the whole GPU was idle and we can only use one core for this 256 threads
     - using 4 warps wouldn't help (so having one SIMD group (32 threads) do 4 warps)
 
+## CPU vs GPU
+- Typically a CPU when doing context switching will clear out its registers (as it doesn't have a very big register file for each core). But in the GPU the register file is big (for example in 3090 we have 16,384 * 32 bits register file size), so the GPU when changing context (switching between warps) leaves the registers untouched
