@@ -40,9 +40,9 @@ kernel void matmul(const device float* A [[ buffer(0) ]],
 This version is very naive as values from A and B matrix are used multiple times, for each operation that is one floating-point multiplication and one one floating point addition we have 2 global loads (one for A and one B value in the matrix)
 
 Here the Arithmetic intensity is $\frac{2 \text{Flops}}{8 \text{bytes}} = 0.25 \text{Op/B}$ (8 bytes because we load 2 times a value of size float32 so 4 bytes each and we do only 2 operations a multiplication and a sum for each value of C) This is a very bad ratio, because we are only doing 0.25 Ops per byte, here we are Memory bounded
-- If our GPU had a compute bound of 19.5 TFLOP/s and a memory bandwith of 1.6 TB/s, Our performance here would be 
-  - Perf = $\min(\text{Peak compute}, \text{A.I.} \cdot \text{Peak bandwith}) = \min(19.5, 1600 * 0.25) = 400 \text{GFLOP/s}$
-- **For our Matmul naive we get** we get a speed of $361.27$ GFLOPS (Our theoretical speed is 7.22 faster than this)
+- If for example our GPU had a compute bound of 19.5 TFLOP/s and a memory bandwith of 1.6 TB/s, Our performance here would be 
+  - Perf = $\min(\text{Peak compute}, \text{A.I.} \cdot \text{Peak bandwith}) = \min(19500, 1600 * 0.25) = 400 \text{GFLOP/s}$
+- **For our Matmul naive we get** we get a speed of $361.27$ GFLOPS (Our theoretical speed is 14.65 faster than this)
 
 
 ## Matmul Tiled
@@ -89,6 +89,11 @@ kernel void matmul(const device float* A [[ buffer(0) ]],
 
     C[gid.y * params.M + gid.x] = sum;   
 ```
+
+So now here the Arithmetic intensity is reduce by a factor of TILE_WIDTH, because now for example with tile of size 4x4 instead of having for each value in the row in the tile in matrix A be loaded by each thread in the row of the tile, we now have each thread load one value, so in the end we have TILE_WIDTH loads instead of TILE_WIDTH x TILE_WIDTH loads. So now our Arithmetic intensity would be for a tile of size 16x16 for example we have $\frac{(16 * 16 * 2 \text{ops})}{(16 * 4 \text{bytes})} = 8 \text{Op/B}$ this is a lot more than what we had before.
+- If for example our GPU had a compute bound of 19.5 TFLOP/s and a memory bandwith of 1.6 TB/s, Our performance here would be 
+  - Perf = $\min(\text{Peak compute}, \text{A.I.} \cdot \text{Peak bandwith}) = \min(19500, 1600 * 8) = 12800 \text{GFLOP/s}$
+- **For our Matmul tiled we get** we get a speed of $639.82$ GFLOPS (Our theoretical speed is 8.28 faster than this)
 
 ### Matmul tiled with bound checking
 
