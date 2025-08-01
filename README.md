@@ -6,15 +6,16 @@ This repository is a deep dive into optimizing fundamental linear algebra operat
 -   **GPU Programming**: Using Apple's [Metal](https://developer.apple.com/metal/) framework (with Objective-C++ and Python).
 
 ## Project Structure
-.
-├── pixi.toml # Mojo project configuration
+
+```text
+├── pixi.toml                         # Mojo project configuration
 ├── cpu/
-│ └── matrix-multiplication/ # GEMM optimization in Mojo
-│ 
-└── gpu/
-├── dot_product/ # Dot product optimization in Metal/Objective-C++
+│   └── matrix_multiplication/       # GEMM optimization in Mojo
 │
-└── matrix_multiplication/ # Matrix multiplication in Metal/Python
+└── gpu/
+    ├── dot_product/                 # Dot product optimization in Metal/Objective-C++
+    └── matrix_multiplication/       # Matrix multiplication in Metal/Python
+```
 
 ---
 
