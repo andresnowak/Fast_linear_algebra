@@ -4,6 +4,9 @@ Objective-c behaves like small talk where we do message passing and we are dynam
 - It looks in a table of the class for the function to pass the message, we call functions with `[]`, and this lookup happens at runtime instead at compile time like c where the address is hardcoded here we have to look for the address at runtime in the table.
 - So here we have methods no, and they look like this in a way `newBufferWithBytes:length:options:` so here we are passing three arguments `[device newBufferWithBytes:A.data() length:byteCount options:MTLResourceStorageModeShared]` to device (and object created from class MTLDevice) and we expect the object to respond to this message
 - `id` keyword means pointer (`*` in c)
+- `@` is a compiler directive and to make literals 
+  - `@"hello"` → an NSString literal
+  - `@[]`, `@{}`, `@YES`, `@42` → array, dictionary, boolean, number literals
 
 
 ## Metal things
@@ -26,3 +29,4 @@ Objective-c behaves like small talk where we do message passing and we are dynam
 - Then here `[enc endEncoding];` we finish encoding the compute commands (so just creating the pipeline (the kernel) and dispatching the threads)
 - Then `[cmd commit];` we commit the work to run on the GPU
 - And finally `[cmd waitUntilCompleted];` we tell the cpu to wait until the GPU has finished 
+- one can use `MTLResourceStorageModeManaged` and synchronizing CPU and GPU data, instead of copying between private (GPU) and shared (CPU + GPU)
