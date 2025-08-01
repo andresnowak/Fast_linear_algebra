@@ -82,8 +82,9 @@ def run_kernel(A: np.ndarray, B: np.ndarray, C: np.ndarray, metallib_path: str):
     encoder.setBytes_length_atIndex_(params, len(params), 3)
 
     # print(f"Max threads per threadgroup: {pipeline.maxTotalThreadsPerThreadgroup()}")
-    grid_size = Metal.MTLSizeMake(M, N, 1)
-    thread_group_size = Metal.MTLSizeMake(32, 32, 1)
+    tile_size = 32
+    thread_group_size = Metal.MTLSizeMake(tile_size, tile_size, 1)
+    grid_size = Metal.MTLSizeMake(np.ceil(M / tile_size) * tile_size, np.ceil(N / tile_size) * tile_size, 1)
     encoder.dispatchThreads_threadsPerThreadgroup_(grid_size, thread_group_size)
     encoder.endEncoding()
 
@@ -116,7 +117,25 @@ def test(A: np.ndarray, B: np.ndarray, C: np.ndarray, metallib_path: str):
 
     print("Output C: ", C[:2, :8])
     print("Output A @ B: ", (A @ B)[:2, :8], "\n")
-    assert np.allclose(A @ B, C)
+    try:
+        np.testing.assert_allclose(
+            C, A @ B, rtol=1e-5, atol=1e-8,
+            err_msg="Matrix multiplication mismatch"
+        )
+    except AssertionError as e:
+        product = A @ B
+        diff = np.abs(C - product)
+        tol = 1e-8 + 1e-5 * np.abs(product)
+        # find the first location where |C - A@B| > tol
+        i, j = np.argwhere(diff > tol)[0]
+        print(
+            f"First mismatch at ({i}, {j}): "
+            f"C={C[i, j]:.6g}, "
+            f"A@B={product[i, j]:.6g}, "
+            f"diff={diff[i, j]:.6g}"
+        )
+        # re-raise so the test still fails
+        raise
 
 
 def benchmark(
@@ -161,6 +180,7 @@ if __name__ == "__main__":
 
     compile_metal_source("matmul.metal")
     compile_metal_source("matmul_tiled.metal")
+    compile_metal_source("matmul_tiled_boundary_check.metal")
 
     metallib_path = os.path.abspath("matmul.metallib")
 
@@ -173,5 +193,21 @@ if __name__ == "__main__":
     test(A, B, C, metallib_path)
     benchmark(A, B, C, metallib_path)
 
+    metallib_path = os.path.abspath("matmul_tiled_boundary_check.metallib")
+
+    n = 1031
+    m = 1033
+    k = 1021
+
+    A = np.random.uniform(0, 5, size=(n, k)).astype(np.float32)
+    A = np.ones_like(A)
+    B = np.random.uniform(0, 5, size=(k, m)).astype(np.float32)
+    B = np.ones_like(B)
+    C = np.zeros((n, m), dtype=np.float32)
+
+    test(A, B, C, metallib_path)
+    benchmark(A, B, C, metallib_path)
+
     remove_file("matmul.metallib")
     remove_file("matmul_tiled.metallib")
+    remove_file("matmul_tiled_boundary_check.metallib")

@@ -55,6 +55,8 @@ Now lets see what happens when we reutilize loads using tiles of work (our threa
 - Then after all threads load a value we synchronize and then now each thread will do its own multiplication and accumulation in their on private sum accumulation variable
 - Finally after this we synchronize again and we repeat moving our tile in the K dimension of both matrices and we do this until we finish and then we save our private sum registers on the corresponding position of the thread in the grid on the C matrix
 
+And we will call this work of copying the values and then doing the calculation as two phases
+
 ```c++
 kernel void matmul(const device float* A [[ buffer(0) ]],
                     const device float* B [[ buffer(1) ]],
@@ -86,4 +88,61 @@ kernel void matmul(const device float* A [[ buffer(0) ]],
     }
 
     C[gid.y * params.M + gid.x] = sum;   
+```
+
+### Matmul tiled with bound checking
+
+Now this implementation has a problem, it assumes that the matrices are square and that the sizes of M, N, K are divisible by the threadgroup dimensions.  
+
+- Here we need to add boundary checking for phase 0 and when we save the values to Matrix C.
+    - When reading the values from A we need to check that our grid position in y is less than N and that our tile and offset position in the threadgroup (`TILE_SIZE * pk + lid.x`) is less than K. If one of this conditions is false we put 0 instead in the position of the thread in threadgroup in the shared memory in Nds
+    - And for values in B we need to check that our tile and offset position in the threadgroup (`pk * TILE_SIZE + lid.y`) is less than K and that grid position in y is less than M. If one of this conditions is false we put 0 instead in the position of the thread in threadgroup in the shared memory in Mds
+    - And finally for matrix C we check grid position in y is less than N and that grid position in x is less than M
+
+```c++
+
+kernel void matmul(const device float* A [[ buffer(0) ]],
+                    const device float* B [[ buffer(1) ]],
+                    device float* C [[ buffer(2) ]],
+                    const device Sizes& params [[ buffer(3) ]],
+                    uint3 gid [[ thread_position_in_grid ]],
+                    uint3 tpt [[ threads_per_threadgroup ]],
+                    uint3 lid [[ thread_position_in_threadgroup ]]) {
+    threadgroup float Mds[TILE_SIZE][TILE_SIZE]; // Here tile size is the size of the threadgroup
+    threadgroup float Nds[TILE_SIZE][TILE_SIZE];
+
+    uint row = gid.y;
+    uint col = gid.x;
+
+    float sum = 0.0;
+
+    for (int pk = 0; pk < (params.K + TILE_SIZE - 1) / TILE_SIZE; ++pk) {
+        // Here lid.x and lid.y are the offsets when moving our tiles in the K dimension
+        if (row < params.N && (TILE_SIZE * pk + lid.x) < params.K) {
+            Nds[lid.y][lid.x] = A[row * params.K + (TILE_SIZE * pk + lid.x)];
+        }
+        else {
+            Nds[lid.y][lid.x] = 0.0;
+        }
+        if ((pk * TILE_SIZE + lid.y) < params.K && col < params.M) {
+            Mds[lid.y][lid.x] = B[(pk * TILE_SIZE + lid.y) * params.M + col];
+        }
+        else {
+            Mds[lid.y][lid.x] = 0.0;
+        }
+
+        threadgroup_barrier(mem_flags::mem_threadgroup); // True dependence
+
+        #pragma unroll
+        for (int k = 0; k < TILE_SIZE; ++k) {
+            sum += Nds[lid.y][k] * Mds[k][lid.x];
+        }
+
+        threadgroup_barrier(mem_flags::mem_threadgroup); // False dependence
+    }
+
+    if (row < params.N && col < params.M) {
+        C[row * params.M + col] = sum;     
+    }
+} 
 ```
