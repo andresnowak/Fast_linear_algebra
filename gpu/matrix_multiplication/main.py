@@ -6,8 +6,8 @@ import os
 import struct
 
 
-def copy_data(cmd_queue, srcs: list, dsts: list, sizes: list):
-    # This can also be done using the resourceManaged instead where instead of copying we use blitencoder to synchronize cpu and gpu 
+def copy_data(cmd_queue, srcs: list, dsts: list, sizes: list) -> float:
+    # This can also be done using the resourceManaged instead where instead of copying we use blitencoder to synchronize cpu and gpu
     copy_cmd_buffer = cmd_queue.commandBuffer()
 
     copy_enc = copy_cmd_buffer.blitCommandEncoder()
@@ -57,7 +57,7 @@ def run_kernel(A: np.ndarray, B: np.ndarray, C: np.ndarray, metallib_path: str):
     buf_C_d = device.newBufferWithLength_options_(
         C.nbytes, Metal.MTLResourceStorageModePrivate
     )
-    
+
     copy_data(cmd_queue, [buf_A, buf_B], [buf_A_d, buf_B_d], [A.nbytes, B.nbytes])
 
     # Compute pipeline
@@ -81,17 +81,20 @@ def run_kernel(A: np.ndarray, B: np.ndarray, C: np.ndarray, metallib_path: str):
     params = struct.pack("III", N, K, M)
     encoder.setBytes_length_atIndex_(params, len(params), 3)
 
-    print(pipeline.maxTotalThreadsPerThreadgroup())
+    # print(f"Max threads per threadgroup: {pipeline.maxTotalThreadsPerThreadgroup()}")
     grid_size = Metal.MTLSizeMake(M, N, 1)
-    thread_group_size = Metal.MTLSizeMake(
-        32, 32, 1
-    )
+    thread_group_size = Metal.MTLSizeMake(32, 32, 1)
     encoder.dispatchThreads_threadsPerThreadgroup_(grid_size, thread_group_size)
     encoder.endEncoding()
 
     # Run
     cmd_buffer.commit()
     cmd_buffer.waitUntilCompleted()
+
+    # kernel time
+    gpu_start = cmd_buffer.GPUStartTime()  # seconds
+    gpu_end = cmd_buffer.GPUEndTime()  # seconds
+    kernel_time = (gpu_end - gpu_start) * 1e9  # nanoseconds
 
     # Copy back to cpu
     copy_data(cmd_queue, [buf_C_d], [buf_C], [C.nbytes])
@@ -105,6 +108,47 @@ def run_kernel(A: np.ndarray, B: np.ndarray, C: np.ndarray, metallib_path: str):
 
     np.copyto(C, c_np)
 
+    return kernel_time
+
+
+def test(A: np.ndarray, B: np.ndarray, C: np.ndarray, metallib_path: str):
+    _ = run_kernel(A, B, C, metallib_path)
+
+    print("Output C: ", C[:2, :8])
+    print("Output A @ B: ", (A @ B)[:2, :8], "\n")
+    assert np.allclose(A @ B, C)
+
+
+def benchmark(
+    A: np.ndarray,
+    B: np.ndarray,
+    C: np.ndarray,
+    metallib_path: str,
+    warmups: int = 3,
+    measure_iterations: int = 10,
+):
+    n, k, m = A.shape[0], A.shape[1], B.shape[1]
+    flops = 2 * k * n * m
+
+    # Warm-up
+    for _ in range(warmups):
+        _ = run_kernel(A, B, C, metallib_path)
+
+    times = []
+    for _ in range(measure_iterations):
+        times.append(run_kernel(A, B, C, metallib_path))
+
+    best_ns = min(times)  # or np.median(times)
+    median_ns = np.median(times)
+    mean_ns = np.mean(times)
+
+    gflops = flops / best_ns
+
+    print(f"Best kernel time: {best_ns:.2f} ns  ({best_ns * 1e-6:.3f} ms)")
+    print(f"Median kernel time: {median_ns:.2f} ns  ({median_ns * 1e-6:.3f} ms)")
+    print(f"Mean kernel time: {mean_ns:.2f} ns  ({mean_ns * 1e-6:.3f} ms)")
+    print(f"Best GFLOPS: {gflops:.2f}")
+
 
 if __name__ == "__main__":
     n = 1024
@@ -116,13 +160,18 @@ if __name__ == "__main__":
     C = np.zeros((n, m), dtype=np.float32)
 
     compile_metal_source("matmul.metal")
+    compile_metal_source("matmul_tiled.metal")
 
     metallib_path = os.path.abspath("matmul.metallib")
 
-    run_kernel(A, B, C, metallib_path)
+    test(A, B, C, metallib_path)
+    benchmark(A, B, C, metallib_path)
+    print()
 
-    print("Output C: ", C)
-    print("Output A @ B: ", (A @ B))
-    assert np.allclose(A @ B, C)
+    metallib_path = os.path.abspath("matmul_tiled.metallib")
+
+    test(A, B, C, metallib_path)
+    benchmark(A, B, C, metallib_path)
 
     remove_file("matmul.metallib")
+    remove_file("matmul_tiled.metallib")
