@@ -23,7 +23,7 @@ std::pair<float, double> dot_product_mul(const std::vector<float> &a, const std:
         return dot;
     };
 
-    int gridSize[3] = {static_cast<int>(n), 1, 1};
+    int gridSize[3] = {(static_cast<int>(n) + 1024 - 1) / 1024 * 1024, 1, 1};
     int threadGroupSize[3] = {1024, 1, 1};
     return test_dot_product(a, b, reduce, gridSize, threadGroupSize, @"dot_product_mul.metallib");
 }
@@ -31,7 +31,7 @@ std::pair<float, double> dot_product_mul(const std::vector<float> &a, const std:
 std::pair<float, double> dot_product_mul_reduce(const std::vector<float> &a, const std::vector<float> &b) {
     size_t n = a.size();
 
-    int gridSize[3] = {static_cast<int>(n), 1, 1};
+    int gridSize[3] = {(static_cast<int>(n) + 1024 - 1) / 1024 * 1024, 1, 1};
     int threadGroupSize[3] = {1024, 1, 1};
 
     auto reduce = [](size_t n, float* results) -> float {
@@ -52,7 +52,7 @@ std::pair<float, double> dot_product_mul_reduce(const std::vector<float> &a, con
 std::pair<float, double> dot_product_mul_reduce_atomic(const std::vector<float> &a, const std::vector<float> &b) {
     size_t n = a.size();
 
-    int gridSize[3] = {static_cast<int>(n), 1, 1};
+    int gridSize[3] = {(static_cast<int>(n) + 1024 - 1) / 1024 * 1024, 1, 1};
     int threadGroupSize[3] = {1024, 1, 1};
 
     auto reduce = [](size_t n, float* results) -> float {
@@ -65,7 +65,7 @@ std::pair<float, double> dot_product_mul_reduce_atomic(const std::vector<float> 
 std::pair<float, double> dot_product_mul_tree_reduce(const std::vector<float> &a, const std::vector<float> &b) {
     size_t n = a.size();
 
-    int gridSize[3] = {static_cast<int>(n), 1, 1}; // we know n is 2048
+    int gridSize[3] = {(static_cast<int>(n) + 1024 - 1) / 1024 * 1024, 1, 1}; // we know n is 2048
     int threadGroupSize[3] = {1024, 1, 1};
 
     auto reduce = [](size_t n, float* results) -> float {
@@ -78,7 +78,7 @@ std::pair<float, double> dot_product_mul_tree_reduce(const std::vector<float> &a
 std::pair<float, double> dot_product_mul_tree_reduce_fix_divergence(const std::vector<float> &a, const std::vector<float> &b) {
     size_t n = a.size();
 
-    int gridSize[3] = {static_cast<int>(n), 1, 1}; // we know n is 2048
+    int gridSize[3] = {(static_cast<int>(n) + 1024 - 1) / 1024 * 1024, 1, 1}; // we know n is 2048
     int threadGroupSize[3] = {1024, 1, 1};
 
     auto reduce = [](size_t n, float* results) -> float {
@@ -91,7 +91,7 @@ std::pair<float, double> dot_product_mul_tree_reduce_fix_divergence(const std::v
 std::pair<float, double> dot_product_mul_reduce_hierarchical_reduction(const std::vector<float> &a, const std::vector<float> &b) {
     size_t n = a.size();
 
-    int gridSize[3] = {static_cast<int>(n), 1, 1};
+    int gridSize[3] = {(static_cast<int>(n) + 1024 - 1) / 1024 * 1024, 1, 1};
     int threadGroupSize[3] = {1024, 1, 1};
 
     auto reduce = [](size_t n, float* results) -> float {
